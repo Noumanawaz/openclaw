@@ -103,6 +103,33 @@ describe("gateway request scope", () => {
     await expectPluginIdScopedGatewayScope("voice-call");
   });
 
+  it("shares only the exact same gateway resolver identity", async () => {
+    const runtimeScope = await importGatewayRequestScopeModule();
+    const context = {} as NonNullable<PluginRuntimeGatewayRequestScope["context"]>;
+    const firstOwner = {};
+    const secondOwner = {};
+    const shared = () => context;
+    runtimeScope.bindGatewayContextResolver(firstOwner, shared);
+    runtimeScope.bindGatewayContextResolver(secondOwner, shared);
+
+    expect(runtimeScope.getSharedGatewayContextResolver([firstOwner, secondOwner])).toBe(shared);
+
+    runtimeScope.bindGatewayContextResolver(secondOwner, () => context);
+    const rejected = runtimeScope.getSharedGatewayContextResolver([firstOwner, secondOwner]);
+    expect(rejected).toBeTypeOf("function");
+    expect(rejected?.()).toBeUndefined();
+  });
+
+  it("fails closed for mixed bound and unbound gateway owners", async () => {
+    const runtimeScope = await importGatewayRequestScopeModule();
+    const boundOwner = {};
+    runtimeScope.bindGatewayContextResolver(boundOwner, () => TEST_SCOPE.context);
+
+    const rejected = runtimeScope.getSharedGatewayContextResolver([boundOwner, {}]);
+    expect(rejected).toBeTypeOf("function");
+    expect(rejected?.()).toBeUndefined();
+  });
+
   it("resolves the owned registry while preserving gateway request facts", async () => {
     const activeRegistry = createEmptyPluginRegistry();
     const requestRegistry = createEmptyPluginRegistry();

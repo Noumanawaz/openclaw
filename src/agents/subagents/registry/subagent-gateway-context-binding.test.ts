@@ -31,6 +31,30 @@ describe("subagent Gateway context binding", () => {
 
     expect(getGatewayContextResolver(first)?.()).toBe(firstContext);
     expect(getGatewayContextResolver(second)?.()).toBe(secondContext);
-    expect(getSharedGatewayContextResolver([first, second])).toBeUndefined();
+    const shared = getSharedGatewayContextResolver([first, second]);
+    expect(shared).toBeTypeOf("function");
+    expect(shared?.()).toBeUndefined();
+  });
+
+  it("rejects separate sibling resolver identities even when they resolve the same context", () => {
+    const first = createSubagentRunRecord({ runId: "run-first" });
+    const second = createSubagentRunRecord({ runId: "run-second" });
+    const context = { owner: "gateway-a" } as never;
+    bindGatewayContextResolver(first, () => context);
+    bindGatewayContextResolver(second, () => context);
+
+    const shared = getSharedGatewayContextResolver([first, second]);
+    expect(shared).toBeTypeOf("function");
+    expect(shared?.()).toBeUndefined();
+  });
+
+  it("refuses a mixed bound and unbound settle batch", () => {
+    const bound = createSubagentRunRecord({ runId: "run-bound" });
+    const unbound = createSubagentRunRecord({ runId: "run-unbound" });
+    bindGatewayContextResolver(bound, () => ({ owner: "gateway-a" }) as never);
+
+    const shared = getSharedGatewayContextResolver([unbound, bound]);
+    expect(shared).toBeTypeOf("function");
+    expect(shared?.()).toBeUndefined();
   });
 });

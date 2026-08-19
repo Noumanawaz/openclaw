@@ -329,6 +329,7 @@ export async function runSubagentAnnounceFlow(params: {
           getRuntimeConfig: subagentAnnounceDeps.getRuntimeConfig,
           replaceSubagentRunAfterSteer: subagentRegistryRuntime.replaceSubagentRunAfterSteer,
         },
+        resolveGatewayContext: params.resolveGatewayContext,
         signal: params.signal,
       });
       if (woke) {

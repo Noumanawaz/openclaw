@@ -399,6 +399,7 @@ export async function spawnSubagentDirect(
           },
         ),
         childLaunch.authorization,
+        gatewayContextResolver,
       );
 
     const emitSpawnLifecycleHooks = createSubagentSpawnLifecycleEmitter({
