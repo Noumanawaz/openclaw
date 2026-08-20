@@ -245,6 +245,7 @@ describe("createGatewaySubagentRuntime.run subagent_ended tracking (#59164)", ()
       pluginId: "memory-core",
       isWebchatConnect: () => false,
     } satisfies PluginRuntimeGatewayRequestScope;
+    serverPlugins.setFallbackGatewayContext(scope.context);
 
     await gatewayScope.withPluginRuntimeGatewayRequestScope(scope, () =>
       runtime.run({
@@ -268,6 +269,7 @@ describe("createGatewaySubagentRuntime.run subagent_ended tracking (#59164)", ()
       pluginId: "memory-core",
       isWebchatConnect: () => false,
     } satisfies PluginRuntimeGatewayRequestScope;
+    serverPlugins.setFallbackGatewayContext(scope.context);
 
     await gatewayScope.withPluginRuntimeGatewayRequestScope(scope, () =>
       runtime.run({

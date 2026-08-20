@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ConfigFileSnapshot, OpenClawConfig } from "../../../config/types.js";
+import { VERSION } from "../../../version.js";
 import {
   isUpgradeConfigRepairResult,
   planUpgradeConfigRepair,
@@ -73,7 +74,7 @@ describe("automatic upgrade config repair", () => {
     });
     const repaired = {
       meta: {
-        lastTouchedVersion: "2026.8.1",
+        lastTouchedVersion: VERSION,
         migrations: { modelPolicyAllowlist: true },
       },
       agents: { defaults: { workspace: "/tmp/workspace" }, entries: { main: {} } },
