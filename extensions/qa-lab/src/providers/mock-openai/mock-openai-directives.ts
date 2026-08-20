@@ -348,12 +348,17 @@ export function resolveHeartbeatPromptReply(text: string): "HEARTBEAT_OK" | "NO_
   if (!trimmed || /remember this fact/i.test(trimmed)) {
     return undefined;
   }
-  if (/(?:^|\n)Read HEARTBEAT\.md if it exists\b/i.test(trimmed)) {
-    return "HEARTBEAT_OK";
+  const noReplyRequested = /(?:^|[.\n]\s*)If nothing needs attention, reply NO_REPLY\b/i.test(
+    trimmed,
+  );
+  const isHeartbeatPrompt =
+    /(?:^|\n)(?:Read HEARTBEAT\.md if it exists|Follow the heartbeat monitor scratch context when provided)\b/i.test(
+      trimmed,
+    );
+  if (isHeartbeatPrompt) {
+    return noReplyRequested ? "NO_REPLY" : "HEARTBEAT_OK";
   }
-  return /(?:^|[.\n]\s*)If nothing needs attention, reply NO_REPLY\b/i.test(trimmed)
-    ? "NO_REPLY"
-    : undefined;
+  return noReplyRequested ? "NO_REPLY" : undefined;
 }
 
 export function readFirstMediaPath(value: unknown): string {

@@ -4766,6 +4766,33 @@ Update and merge these partial structured summaries.`,
     expect(outputText(await response.json())).toBe(reply);
   });
 
+  it("answers current heartbeat prompts without replaying earlier image requests", async () => {
+    const server = await startMockServer();
+    const imageRequest =
+      "Capability flip image check: generate a QA lighthouse image in this turn right now.";
+    const heartbeatRequest = [
+      "OpenClaw assembled context for this turn:",
+      "<conversation_context>",
+      "[user]",
+      imageRequest,
+      "</conversation_context>",
+      "",
+      "Current user request:",
+      "System: Gateway restart required (config.patch)",
+      "",
+      "Follow the heartbeat monitor scratch context when provided. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.",
+    ].join("\n");
+
+    const response = await expectNonStreamingResponses(server, {
+      tools: [IMAGE_GENERATE_TOOL],
+      input: [makeUserInput(imageRequest), makeUserInput(heartbeatRequest)],
+    });
+    const payload = await response.json();
+
+    expect(outputItem(payload)).toMatchObject({ type: "message" });
+    expect(outputText(payload)).toBe("HEARTBEAT_OK");
+  });
+
   it("returns exact markers for visible and hot-installed skills", async () => {
     const server = await startMockServer();
 

@@ -1050,11 +1050,16 @@ export const configHandlers: GatewayRequestHandlers = {
       respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, formatErrorMessage(error)));
       return;
     }
-    const merged = applyMergePatch(snapshot.config, normalizedPatch, {
+    // Source-owned array rows must not persist runtime-only catalog defaults from siblings.
+    const mergedSource = applyMergePatch(snapshot.resolved, normalizedPatch, {
       // Arrays with stable ids behave like maps for partial control-plane edits.
       mergeObjectArraysById: true,
       replaceArrayPaths: replacePaths,
     });
+    const merged = applyMergePatch(
+      snapshot.config,
+      createMergePatch(snapshot.resolved, mergedSource),
+    );
     const schemaPatch = loadSchemaWithPlugins();
     const restoredMerge = restoreRedactedValues(merged, snapshot.config, schemaPatch.uiHints);
     if (!restoredMerge.ok) {

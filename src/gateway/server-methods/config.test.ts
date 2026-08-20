@@ -494,6 +494,65 @@ describe("config.patch hash-free ui.prefs LWW", () => {
 });
 
 describe("config.patch ID-keyed arrays", () => {
+  it.each([false, true])(
+    "keeps catalog-only model defaults out of authored patches (authored compat: %s)",
+    async (authoredCompat) => {
+      const authoredTextModel = {
+        id: "gpt-5.5",
+        ...(authoredCompat ? { compat: { supportsStore: false } } : {}),
+      };
+      const sourceConfig = {
+        models: {
+          providers: {
+            openai: {
+              baseUrl: "https://api.openai.com/v1",
+              models: [authoredTextModel, { id: "gpt-image-1" }],
+            },
+          },
+        },
+      } as unknown as OpenClawConfig;
+      const runtimeConfig = structuredClone(sourceConfig);
+      const runtimeModel = runtimeConfig.models?.providers?.openai?.models[0];
+      expect(runtimeModel).toBeDefined();
+      Object.assign(runtimeModel!, {
+        compat: authoredCompat ? { supportsStore: false } : { codeMode: "preferred" },
+        contextTokens: 272_000,
+      });
+      storedConfig = sourceConfig;
+      configWriteMocks.readConfigFileSnapshotForWrite.mockImplementationOnce(async () => {
+        const snapshot = createConfigWriteSnapshot(runtimeConfig);
+        snapshot.snapshot.sourceConfig = sourceConfig;
+        snapshot.snapshot.resolved = sourceConfig;
+        snapshot.snapshot.parsed = sourceConfig;
+        snapshot.snapshot.raw = JSON.stringify(sourceConfig);
+        return snapshot;
+      });
+
+      const { respond } = await invokeConfigPatch({
+        raw: {
+          models: {
+            providers: {
+              openai: {
+                models: [{ id: "gpt-image-1", baseUrl: "http://127.0.0.1:44080/v1" }],
+              },
+            },
+          },
+        },
+        baseHash: "base-hash",
+      });
+
+      expect(respond).toHaveBeenCalledWith(
+        true,
+        expect.objectContaining({ ok: true, hash: "next-hash-1" }),
+        undefined,
+      );
+      expect(storedConfig.models?.providers?.openai?.models).toEqual([
+        authoredTextModel,
+        { id: "gpt-image-1", baseUrl: "http://127.0.0.1:44080/v1" },
+      ]);
+    },
+  );
+
   it("rejects duplicate IDs before applying an ID-merged array patch", async () => {
     storedConfig = {
       models: {

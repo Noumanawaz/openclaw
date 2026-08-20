@@ -12,6 +12,7 @@ import {
   loadInstalledPluginIndexInstallRecordsSync,
   writePersistedInstalledPluginIndexInstallRecordsSync,
 } from "./installed-plugin-index-records.js";
+import { getReusableCachedPluginRegistry, setCachedPluginRegistry } from "./loader-cache.js";
 import { resolvePluginLoadCacheContext } from "./loader-load-context.js";
 import { createLazyPluginRuntime } from "./loader-module-runtime.js";
 import {
@@ -30,7 +31,11 @@ import {
 import { buildMemoryPromptSection, registerMemoryCapability } from "./memory-state.js";
 import { clearPluginMetadataLifecycleCaches } from "./plugin-metadata-lifecycle.js";
 import { createEmptyPluginRegistry } from "./registry.js";
-import { getActivePluginRegistry, setActivePluginRegistry } from "./runtime.js";
+import {
+  clearActivePluginRegistry,
+  getActivePluginRegistry,
+  setActivePluginRegistry,
+} from "./runtime.js";
 import type { PluginRuntime } from "./runtime/types.js";
 
 afterEach(() => {
@@ -117,6 +122,22 @@ describe("cached plugin load failures", () => {
 
     expect(loadPluginRegistryHandle({ ...options, throwOnLoadError: true })).toBe(cached);
   });
+});
+
+it("invalidates cached registries when the active plugin registry lifecycle closes", async () => {
+  const rootCacheKey = "restart-root";
+  const snapshotCacheKey = "restart-gateway-bound-snapshot";
+  const root = createEmptyPluginRegistry();
+  const snapshot = createEmptyPluginRegistry();
+  setCachedPluginRegistry(rootCacheKey, root);
+  setCachedPluginRegistry(snapshotCacheKey, snapshot);
+  setActivePluginRegistry(root, rootCacheKey, "gateway-bindable");
+
+  await clearActivePluginRegistry();
+
+  expect(getReusableCachedPluginRegistry(rootCacheKey)).toBeUndefined();
+  expect(getReusableCachedPluginRegistry(snapshotCacheKey)).toBeUndefined();
+  expect(getActivePluginRegistry()).toBeNull();
 });
 
 function requireMemoryEmbeddingProvider(providerId: string) {
