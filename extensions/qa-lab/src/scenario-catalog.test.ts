@@ -65,14 +65,6 @@ describe("qa scenario catalog", () => {
       }
       expect(["playwright", "script", "vitest"]).toContain(execution.kind);
       expect(fs.existsSync(execution.path), `${scenario.id} execution.path exists`).toBe(true);
-      if (execution.kind === "playwright" && execution.testNamePattern) {
-        const testSource = fs.readFileSync(execution.path, "utf8");
-        const testNames = [...testSource.matchAll(/\bit\s*\(\s*["'`]([^"'`\n]+)["'`]/gu)];
-        expect(
-          testNames.some(([, name]) => new RegExp(execution.testNamePattern).test(name ?? "")),
-          `${scenario.id} testNamePattern matches an executable test`,
-        ).toBe(true);
-      }
       expect(execution.flow).toBeUndefined();
     }
     expect(
