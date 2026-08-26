@@ -36,6 +36,7 @@ import type {
   CronRunTelemetry,
   CronStoredJob,
   CronStoreFile,
+  CronToolsAllowExecTarget,
   CronToolsAllowProvenance,
 } from "../types.js";
 
@@ -107,7 +108,7 @@ export type CronServiceDeps = {
   /** List enabled, configured channel ids without exposing channel machinery to cron core. */
   listConfiguredChannels?: () => readonly string[] | Promise<readonly string[]>;
   evaluateCronTrigger?: (params: {
-    job: CronJob;
+    job: CronStoredJob;
     script: string;
     state: unknown;
     streamBatch?: string;
@@ -234,7 +235,7 @@ export type CronServiceDeps = {
     } & CronRunOutcome
   >;
   runScriptJob?: (params: {
-    job: CronJob;
+    job: CronStoredJob;
     streamBatch?: string;
     abortSignal?: AbortSignal;
   }) => Promise<
@@ -457,6 +458,8 @@ export type CronAddOptions = {
   scheduledToolPolicy?: CronScheduledToolPolicy;
   /** Private proof from an authenticated agent-runtime caller. */
   toolsAllowProvenance?: CronToolsAllowProvenance;
+  /** Restrict-only exec pin from the signed creator-turn identity. */
+  toolsAllowExecTarget?: CronToolsAllowExecTarget;
   /** Synchronous Gateway-owned liveness guard consumed immediately before mutation. */
   commitGuard?: () => void;
   /** One-use fresh capture; callback presence means fresh even when it returns undefined. */
@@ -468,6 +471,8 @@ export type CronUpdateInput = CronJobPatch;
 export type CronUpdateOptions = {
   scheduledToolPolicy?: CronScheduledToolPolicy;
   toolsAllowProvenance?: CronToolsAllowProvenance;
+  /** Restrict-only exec pin from the signed creator-turn identity. */
+  toolsAllowExecTarget?: CronToolsAllowExecTarget;
   /** Synchronous Gateway-owned liveness guard consumed immediately before mutation. */
   commitGuard?: () => void;
   /** One-use fresh capture; callback presence means fresh even when it returns undefined. */

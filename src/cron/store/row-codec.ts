@@ -8,6 +8,7 @@ import { normalizeCronJobIdentityFields } from "../normalize-job-identity.js";
 import { normalizeCronJobInput } from "../normalize.js";
 import { getInvalidPersistedCronJobReason } from "../persisted-shape.js";
 import { tryCronScheduleIdentity } from "../schedule-identity.js";
+import { normalizeCronToolsAllowExecTarget } from "../scheduled-tool-policy.js";
 import type { CronJobState, CronStoredJob, CronStoreFile } from "../types.js";
 import { deliveryFromJson, deliveryToJson } from "./delivery-codec.js";
 import { normalizeNumber, tryParseJsonObject } from "./scalar-codec.js";
@@ -111,12 +112,17 @@ function rowToCronJob(row: CronJobRow, jobJson: Record<string, unknown>): CronSt
   if (!state || getInvalidPersistedCronJobReason(jobJson)) {
     return null;
   }
+  const toolsAllowExecTarget = normalizeCronToolsAllowExecTarget(jobJson.toolsAllowExecTarget);
   const createdAtMs =
     typeof jobJson.createdAtMs === "number" && Number.isFinite(jobJson.createdAtMs)
       ? jobJson.createdAtMs
       : Date.now();
   // Doctor retains unresolved legacy markers in config JSON; runtime never consumes them.
-  const { notify: _legacyNotify, ...runtimeConfig } = decodeCronJobConfig(jobJson);
+  const {
+    notify: _legacyNotify,
+    toolsAllowExecTarget: _rawToolsAllowExecTarget,
+    ...runtimeConfig
+  } = decodeCronJobConfig(jobJson);
   if (isRecord(runtimeConfig.delivery) && runtimeConfig.delivery.mode === undefined) {
     // Legacy destination-only config remains untouched for doctor; runtime defaults to announce.
     runtimeConfig.delivery = deliveryFromJson({ ...runtimeConfig.delivery, mode: "announce" });
@@ -124,6 +130,7 @@ function rowToCronJob(row: CronJobRow, jobJson: Record<string, unknown>): CronSt
   return {
     ...runtimeConfig,
     id: row.job_id,
+    ...(toolsAllowExecTarget ? { toolsAllowExecTarget } : {}),
     createdAtMs,
     updatedAtMs:
       normalizeNumber(row.runtime_updated_at_ms) ?? normalizeNumber(row.updated_at) ?? createdAtMs,

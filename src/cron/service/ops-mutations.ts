@@ -269,6 +269,7 @@ function declarativeFields(job: CronStoredJob, includeEnabled: boolean) {
     payload: job.payload,
     scheduledToolPolicy: job.scheduledToolPolicy,
     toolsAllowProvenance: job.toolsAllowProvenance,
+    toolsAllowExecTarget: job.toolsAllowExecTarget,
     runtimeAuthority: job.runtimeAuthority,
     runtimeAuthorityRecoveryRequired: job.runtimeAuthorityRecoveryRequired,
     delivery: job.delivery,
@@ -395,6 +396,7 @@ export async function add(
         cronConfig: state.deps.cronConfig,
         scheduledToolPolicy: opts?.scheduledToolPolicy,
         toolsAllowProvenance: opts?.toolsAllowProvenance,
+        toolsAllowExecTarget: opts?.toolsAllowExecTarget,
         configuredChannels,
       });
       const runtimeAuthorityMutation = consumeRuntimeAuthorityMutationOptions(opts);
@@ -440,6 +442,7 @@ export async function add(
     const job = createJob(state, creationInput, {
       scheduledToolPolicy: opts?.scheduledToolPolicy,
       toolsAllowProvenance: opts?.toolsAllowProvenance,
+      toolsAllowExecTarget: opts?.toolsAllowExecTarget,
       configuredChannels,
     });
     if (opts?.createdActor) {
@@ -539,6 +542,7 @@ async function updateLoadedJob(params: {
     cronConfig: state.deps.cronConfig,
     scheduledToolPolicy: opts?.scheduledToolPolicy,
     toolsAllowProvenance: opts?.toolsAllowProvenance,
+    toolsAllowExecTarget: opts?.toolsAllowExecTarget,
     configuredChannels,
   });
   if (patch.agentId !== undefined) {

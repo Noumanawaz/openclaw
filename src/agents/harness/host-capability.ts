@@ -16,6 +16,7 @@ import {
 } from "../agent-tools.before-tool-call.js";
 import { createOpenClawCodingTools } from "../agent-tools.js";
 import type { EmbeddedRunAttemptParams } from "../embedded-agent-runner/run/types.js";
+import { createCronScheduledToolProjection } from "../exec-tool-target-pinning.js";
 import { prepareGitHubToolEnvironment } from "../github-tool-identity.js";
 import {
   attachInternalToolExecutionPreparer,
@@ -31,6 +32,7 @@ import {
 } from "../tools/gateway-caller-context.js";
 import { callGatewayTool } from "../tools/gateway.js";
 import type { AgentHarnessHostCapabilities } from "./host-capability-types.js";
+import { registerAgentHarnessScheduledToolProjectionCapability } from "./host-private-capabilities.js";
 
 type AgentHarnessHostAttempt = Partial<EmbeddedRunAttemptParams> &
   Pick<EmbeddedRunAttemptParams, "admittedRunContext" | "runId">;
@@ -295,6 +297,10 @@ export function createAgentHarnessHostCapabilities(params: {
   });
 
   const trajectoryRecorder = attempt.trajectoryRecorder;
+  const scheduledToolSources = new WeakMap<
+    AnyAgentTool,
+    Readonly<{ targetTool: "exec" | "process"; execute: AnyAgentTool["execute"] }>
+  >();
   const bindToolSurface: AgentHarnessHostCapabilities["bindToolSurface"] = (tools, options) => {
     assertActive();
     const boundAbortSignal = attempt.abortSignal
@@ -346,10 +352,19 @@ export function createAgentHarnessHostCapabilities(params: {
     bindToolSurface,
     createToolSurface: (options, bindingOptions) => {
       assertActive();
-      return bindToolSurface(
+      const tools = bindToolSurface(
         createOpenClawCodingTools({ ...options, operationalRunInstance }),
         bindingOptions,
       );
+      for (const tool of tools) {
+        if (tool.name === "exec" || tool.name === "process") {
+          scheduledToolSources.set(
+            tool,
+            Object.freeze({ targetTool: tool.name, execute: tool.execute }),
+          );
+        }
+      }
+      return tools;
     },
     prepareMutableFileApproval: async (request) => {
       assertActive();
@@ -422,6 +437,27 @@ export function createAgentHarnessHostCapabilities(params: {
         decision: result.decision,
         terminalReason: result.terminalReason,
       };
+    },
+  });
+  registerAgentHarnessScheduledToolProjectionCapability({
+    hostCapabilities: capabilities,
+    ownerPluginId: params.pluginId,
+    create: (sourceTool, projection) => {
+      assertActive();
+      const source = scheduledToolSources.get(sourceTool);
+      if (
+        !source ||
+        sourceTool.name !== source.targetTool ||
+        sourceTool.execute !== source.execute
+      ) {
+        throw new Error("scheduled tool projection source was not created by this host capability");
+      }
+      return createCronScheduledToolProjection(
+        sourceTool,
+        assertActive,
+        source.targetTool,
+        projection,
+      );
     },
   });
   return {

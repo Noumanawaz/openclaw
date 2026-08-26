@@ -23,6 +23,7 @@ import type {
   CronJobState,
   CronSchedule,
   CronStoredJob,
+  CronToolsAllowExecTarget,
   CronToolsAllowProvenance,
 } from "../types.js";
 import { resolveInitialCronDelivery } from "./initial-delivery.js";
@@ -33,6 +34,7 @@ import {
 } from "./jobs-scheduling.js";
 import {
   reconcileScheduledToolPolicy,
+  reconcileToolsAllowExecTarget,
   reconcileToolsAllowProvenance,
   stampScheduledToolPolicy,
 } from "./jobs-tool-policy.js";
@@ -210,6 +212,7 @@ export function createJob(
   opts?: DeliveryValidationOptions & {
     scheduledToolPolicy?: CronScheduledToolPolicy;
     toolsAllowProvenance?: CronToolsAllowProvenance;
+    toolsAllowExecTarget?: CronToolsAllowExecTarget;
   },
 ): CronStoredJob {
   const now = state.deps.nowMs();
@@ -281,6 +284,11 @@ export function createJob(
     explicitlyMutatesToolsAllow: true,
     toolsAllowProvenance: opts?.toolsAllowProvenance,
   });
+  reconcileToolsAllowExecTarget({
+    job,
+    explicitlyMutatesToolsAllow: true,
+    toolsAllowExecTarget: opts?.toolsAllowExecTarget,
+  });
   validateFullJob(
     job,
     {
@@ -305,6 +313,7 @@ export function applyJobPatch(
     cronConfig?: CronConfig;
     scheduledToolPolicy?: CronScheduledToolPolicy;
     toolsAllowProvenance?: CronToolsAllowProvenance;
+    toolsAllowExecTarget?: CronToolsAllowExecTarget;
   } & DeliveryValidationOptions,
 ) {
   const previouslyUsedToolRuntime = cronJobUsesToolRuntime(job);
@@ -389,6 +398,12 @@ export function applyJobPatch(
     explicitlyMutatesToolsAllow:
       patch.payload !== undefined && Object.hasOwn(patch.payload, "toolsAllow"),
     toolsAllowProvenance: opts?.toolsAllowProvenance,
+  });
+  reconcileToolsAllowExecTarget({
+    job,
+    explicitlyMutatesToolsAllow:
+      patch.payload !== undefined && Object.hasOwn(patch.payload, "toolsAllow"),
+    toolsAllowExecTarget: opts?.toolsAllowExecTarget,
   });
   if (patch.delivery) {
     const implicitMode = resolveCronDeliveryPlan(job).mode;
@@ -478,6 +493,7 @@ export function applyDeclarativeJobSpec(
     cronConfig?: CronConfig;
     scheduledToolPolicy?: CronScheduledToolPolicy;
     toolsAllowProvenance?: CronToolsAllowProvenance;
+    toolsAllowExecTarget?: CronToolsAllowExecTarget;
   } & DeliveryValidationOptions,
 ) {
   const previouslyUsedToolRuntime = cronJobUsesToolRuntime(job);
@@ -536,6 +552,11 @@ export function applyDeclarativeJobSpec(
     job,
     explicitlyMutatesToolsAllow: explicitlyDeclaresToolsAllow,
     toolsAllowProvenance: opts.toolsAllowProvenance,
+  });
+  reconcileToolsAllowExecTarget({
+    job,
+    explicitlyMutatesToolsAllow: explicitlyDeclaresToolsAllow,
+    toolsAllowExecTarget: opts.toolsAllowExecTarget,
   });
   const delivery = resolveInitialCronDelivery(input);
   if (delivery) {

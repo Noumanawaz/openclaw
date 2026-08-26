@@ -30,6 +30,27 @@ export function normalizeCronScheduledToolCallerOrigin(
     : { kind: "unknown" };
 }
 
+/**
+ * Restrict-only execution target for a job's exec grant, captured from a
+ * creator surface whose only exec capability was host-pinned. Absence — on
+ * older readers, after tampering, or for non-pinned creators — yields the
+ * baseline unpinned exec under normal scheduled exec policy; presence can
+ * only narrow, so this field needs no integrity seal.
+ */
+export type CronToolsAllowExecTarget = {
+  version: 1;
+  host: "gateway";
+};
+
+/** Accepts only the exact restrict-only shape; anything else stays absent. */
+export function normalizeCronToolsAllowExecTarget(
+  value: unknown,
+): CronToolsAllowExecTarget | undefined {
+  return isRecord(value) && value.version === 1 && value.host === "gateway"
+    ? { version: 1, host: "gateway" }
+    : undefined;
+}
+
 /** Server-authored provenance for a persisted scheduled tool-cap authority envelope. */
 export type CronScheduledToolPolicy =
   | {

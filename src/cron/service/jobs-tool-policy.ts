@@ -4,7 +4,11 @@ import {
   type CronScheduledToolPolicy,
 } from "../scheduled-tool-policy.js";
 import { cronJobUsesToolRuntime } from "../tools-allow.js";
-import type { CronStoredJob, CronToolsAllowProvenance } from "../types.js";
+import type {
+  CronStoredJob,
+  CronToolsAllowExecTarget,
+  CronToolsAllowProvenance,
+} from "../types.js";
 
 export function stampScheduledToolPolicy(
   job: CronStoredJob,
@@ -48,6 +52,35 @@ export function reconcileScheduledToolPolicy(params: {
   delete job.scheduledToolPolicy;
   if (params.explicitlyMutatesToolsAllow || !params.previouslyUsedToolRuntime) {
     stampScheduledToolPolicy(job, params.scheduledToolPolicy);
+  }
+}
+
+/**
+ * Stamps or clears the restrict-only exec pin alongside the cap it was
+ * captured with. The pin exists only while the job grants canonical `exec`
+ * from a creator surface whose exec capability was host-pinned; explicit cap
+ * rewrites without that server-verified fact clear it, falling back to the
+ * baseline unpinned exec policy.
+ */
+export function reconcileToolsAllowExecTarget(params: {
+  job: CronStoredJob;
+  explicitlyMutatesToolsAllow: boolean;
+  toolsAllowExecTarget?: CronToolsAllowExecTarget;
+}): void {
+  const { job } = params;
+  if (!cronJobUsesToolRuntime(job) || job.payload.toolsAllow === undefined) {
+    delete job.toolsAllowExecTarget;
+    return;
+  }
+  if (!params.explicitlyMutatesToolsAllow) {
+    return;
+  }
+  const grantsExec =
+    Array.isArray(job.payload.toolsAllow) && job.payload.toolsAllow.includes("exec");
+  if (params.toolsAllowExecTarget && grantsExec) {
+    job.toolsAllowExecTarget = structuredClone(params.toolsAllowExecTarget);
+  } else {
+    delete job.toolsAllowExecTarget;
   }
 }
 
