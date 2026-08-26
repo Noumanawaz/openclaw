@@ -138,4 +138,51 @@ describe("resolveScheduledToolCallerContext", () => {
       }),
     ).toEqual({ accountId: "creator", channel: undefined, local: true, scheduled: true });
   });
+
+  it("attaches the restrict-only exec pin from the persisted job field", () => {
+    expect(
+      resolveScheduledToolPolicyContext({
+        toolsAllow: ["exec"],
+        scheduledToolPolicy: { version: 1, mode: "trusted" },
+        execTarget: { version: 1, host: "gateway" },
+      }),
+    ).toEqual({ version: 1, mode: "trusted", execTarget: { host: "gateway" } });
+  });
+
+  it("preserves the pin when re-resolving an already-resolved context", () => {
+    const first = resolveScheduledToolPolicyContext({
+      toolsAllow: ["exec"],
+      scheduledToolPolicy: {
+        version: 1,
+        mode: "account",
+        ownerSessionKey: "agent:main:main",
+        ownerAccountId: "creator",
+      },
+      execTarget: { version: 1, host: "gateway" },
+    });
+    expect(first?.execTarget).toEqual({ host: "gateway" });
+    const again = resolveScheduledToolPolicyContext({
+      toolsAllow: ["exec"],
+      scheduledToolPolicy: first,
+      execTarget: first?.execTarget,
+    });
+    expect(again?.execTarget).toEqual({ host: "gateway" });
+  });
+
+  it("ignores invalid exec pin shapes instead of widening or failing", () => {
+    for (const execTarget of [
+      { version: 2, host: "gateway" },
+      { version: 1, host: "node" },
+      "gateway",
+      null,
+    ]) {
+      expect(
+        resolveScheduledToolPolicyContext({
+          toolsAllow: ["exec"],
+          scheduledToolPolicy: { version: 1, mode: "trusted" },
+          execTarget,
+        })?.execTarget,
+      ).toBeUndefined();
+    }
+  });
 });

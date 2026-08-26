@@ -888,6 +888,43 @@ describe("cron store", () => {
     expect(readOnly?.runtimeAuthority).toEqual(job.runtimeAuthority);
   });
 
+  it("round-trips the restrict-only exec target and drops foreign shapes", async () => {
+    const { storePath } = await makeStorePath();
+    const authorityStore = makeAuthorityStore("exec-target-round-trip");
+    const job = expectDefined(authorityStore.jobs[0], "exec target job test invariant");
+    job.payload = {
+      kind: "agentTurn",
+      message: "scheduled continuation",
+      toolsAllow: ["exec", "read"],
+    };
+    job.toolsAllowExecTarget = { version: 1, host: "gateway" };
+
+    await saveCronStore(storePath, authorityStore);
+    const reloaded = (await loadCronStore(storePath)).jobs[0];
+    expect(reloaded?.toolsAllowExecTarget).toEqual({ version: 1, host: "gateway" });
+
+    // A tampered or future shape is not a pin; the job falls back to baseline exec.
+    const database = openOpenClawStateDatabase().db;
+    const row = database.prepare("SELECT job_json FROM cron_jobs WHERE job_id = ?").get(job.id) as {
+      job_json: string;
+    };
+    const edited = JSON.parse(row.job_json) as Record<string, unknown>;
+    edited.toolsAllowExecTarget = { version: 1, host: "node" };
+    database
+      .prepare("UPDATE cron_jobs SET job_json = ? WHERE job_id = ?")
+      .run(JSON.stringify(edited), job.id);
+    const rejected = (await loadCronStore(storePath)).jobs[0];
+    expect(rejected?.toolsAllowExecTarget).toBeUndefined();
+
+    // Extra keys from a newer writer are tolerated: known fields rebuild cleanly.
+    edited.toolsAllowExecTarget = { version: 1, host: "gateway", note: "future-field" };
+    database
+      .prepare("UPDATE cron_jobs SET job_json = ? WHERE job_id = ?")
+      .run(JSON.stringify(edited), job.id);
+    const tolerated = (await loadCronStore(storePath)).jobs[0];
+    expect(tolerated?.toolsAllowExecTarget).toEqual({ version: 1, host: "gateway" });
+  });
+
   it("retires authority when an older writer changes its tool cap", async () => {
     const { storePath } = await makeStorePath();
     const authorityStore = makeAuthorityStore("downgrade-cap-change");

@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { wrapToolWithBeforeToolCallHook } from "../agents/agent-tools.before-tool-call.js";
 import { BEFORE_TOOL_CALL_HOOK_CONTEXT } from "../agents/before-tool-call-metadata.js";
 import type { CodeModeHeadlessResult } from "../agents/code-mode.js";
@@ -11,6 +12,7 @@ type HeadlessParams = Parameters<NonNullable<EvaluatorDeps["runHeadless"]>>[0];
 type PrepareParams = Parameters<NonNullable<EvaluatorDeps["prepareRuntime"]>>[0];
 
 const beforeToolCallTesting = { BEFORE_TOOL_CALL_HOOK_CONTEXT };
+const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
 function completed(params: { value: unknown; output?: unknown[] }): CodeModeHeadlessResult {
   return {
@@ -69,6 +71,57 @@ function createCronTriggerEvaluator(deps: EvaluatorDeps) {
 }
 
 describe("cron trigger script evaluator", () => {
+  it("runs the documented exec contract from a canonically captured pinned cap", async () => {
+    const workspaceDir = tempDirs.make("openclaw-cron-canonical-cap-");
+    // The configured default exec host is a nonexistent node: only the
+    // restrict-only gateway pin can make this command run.
+    const config = {
+      agents: { defaults: { workspace: workspaceDir } },
+      tools: {
+        exec: {
+          host: "node",
+          node: "configured-node-must-not-run",
+          security: "full",
+          ask: "off",
+        },
+      },
+    } as OpenClawConfig;
+    const evaluate = createCronScriptRuntime({ config }).evaluateTrigger;
+
+    await expect(
+      evaluate({
+        jobId: "job-canonical-pinned-exec",
+        script:
+          'await exec({ command: "printf openclaw-canonical-ok", host: "node", node: "remote" }); return { fire: false };',
+        state: null,
+        toolsAllow: ["exec", "process"],
+        scheduledToolPolicy: { version: 1, mode: "trusted" },
+        execTarget: { version: 1, host: "gateway" },
+      }),
+    ).resolves.toEqual({ kind: "evaluated", fire: false });
+  });
+
+  it("keeps an uncanonicalized alias-name cap fail-closed for exec", async () => {
+    const workspaceDir = tempDirs.make("openclaw-cron-alias-collision-");
+    const evaluate = createCronScriptRuntime({
+      config: {
+        agents: { defaults: { workspace: workspaceDir } },
+        tools: { exec: { host: "gateway", security: "full", ask: "off" } },
+      } as OpenClawConfig,
+    }).evaluateTrigger;
+
+    const result = await evaluate({
+      jobId: "job-colliding-gateway-exec",
+      script: 'await exec({ command: "printf must-not-run" }); return { fire: false };',
+      state: null,
+      toolsAllow: ["gateway_exec"],
+      scheduledToolPolicy: { version: 1, mode: "trusted" },
+    });
+
+    expect(result).toMatchObject({ kind: "error", code: "internal_error" });
+    expect(result.kind === "error" ? result.error : "").toContain("exec is not defined");
+  });
+
   it("prefers a valid returned value and injects trigger state", async () => {
     const runHeadless = vi.fn(async (_params: HeadlessParams) =>
       completed({
