@@ -564,16 +564,6 @@ describe("openshell sandbox backend e2e", () => {
           }),
           "utf8",
         );
-        await fs.writeFile(
-          allowPolicyPath,
-          buildOpenShellPolicyYaml({
-            port: hostPolicyServer.port,
-            binaryPath: "/usr/bin/curl",
-            hostIp,
-          }),
-          "utf8",
-        );
-
         const execResult = await runBackendExec({
           backend,
           command: "pwd && cat /opt/openshell-e2e-marker.txt && cat seed.txt",
@@ -609,7 +599,17 @@ describe("openshell sandbox backend e2e", () => {
           command: "command -v curl",
           timeoutMs: 60_000,
         });
-        expect(trimTrailingNewline(curlPathResult.stdout.trim())).toMatch(/^\/.+\/curl$/);
+        const curlPath = trimTrailingNewline(curlPathResult.stdout.trim());
+        expect(curlPath).toMatch(/^\/.+\/curl$/);
+        await fs.writeFile(
+          allowPolicyPath,
+          buildOpenShellPolicyYaml({
+            port: hostPolicyServer.port,
+            binaryPath: curlPath,
+            hostIp,
+          }),
+          "utf8",
+        );
 
         const sandbox = createSandboxTestContext({
           overrides: {
