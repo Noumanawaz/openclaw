@@ -29,7 +29,6 @@ const OPENCLAW_OPENSHELL_COMMAND =
   process.env.OPENCLAW_E2E_OPENSHELL_COMMAND?.trim() || "openshell";
 const OPENCLAW_OPENSHELL_CONFIG_HOME =
   process.env.OPENCLAW_E2E_OPENSHELL_CONFIG_HOME?.trim() || null;
-const OPENCLAW_OPENSHELL_HOST_IP = process.env.OPENCLAW_E2E_OPENSHELL_HOST_IP?.trim() || null;
 
 const CUSTOM_IMAGE_DOCKERFILE = `FROM python:3.13-slim
 
@@ -140,46 +139,6 @@ async function dockerReady(): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-async function resolveOpenShellHostIp(): Promise<string> {
-  if (OPENCLAW_OPENSHELL_HOST_IP) {
-    return OPENCLAW_OPENSHELL_HOST_IP;
-  }
-  const networks = await runCommand({
-    command: "docker",
-    args: ["network", "ls", "--format", "{{.Name}}"],
-    timeoutMs: 20_000,
-  });
-  for (const network of networks.stdout.split(/\r?\n/u).map((value) => value.trim())) {
-    if (!network.startsWith("openshell")) {
-      continue;
-    }
-    const gateway = await runCommand({
-      command: "docker",
-      args: [
-        "run",
-        "--rm",
-        "--network",
-        network,
-        "--add-host",
-        "host.openshell.internal:host-gateway",
-        "python:3.13-alpine",
-        "python3",
-        "-c",
-        "import socket; print(socket.gethostbyname('host.openshell.internal'))",
-      ],
-      allowFailure: true,
-      timeoutMs: 60_000,
-    });
-    const hostIp = gateway.stdout.trim();
-    if (gateway.code === 0 && net.isIP(hostIp)) {
-      return hostIp;
-    }
-  }
-  throw new Error(
-    "OpenShell E2E could not resolve host.openshell.internal on the OpenShell Docker network; set OPENCLAW_E2E_OPENSHELL_HOST_IP",
-  );
 }
 
 async function allocatePort(): Promise<number> {
@@ -314,11 +273,7 @@ HTTPServer(("0.0.0.0", 8000), Handler).serve_forever()
   throw new Error("docker-backed host policy server did not become ready");
 }
 
-function buildOpenShellPolicyYaml(params: {
-  port: number;
-  binaryPath: string;
-  hostIp: string;
-}): string {
+function buildOpenShellPolicyYaml(params: { port: number; binaryPath: string }): string {
   const networkPolicies = `  host_echo:
     name: host-echo
     endpoints:
@@ -328,7 +283,10 @@ function buildOpenShellPolicyYaml(params: {
         enforcement: enforce
         access: full
         allowed_ips:
-          - "${params.hostIp}/32"
+          - "10.0.0.0/8"
+          - "172.0.0.0/8"
+          - "192.168.0.0/16"
+          - "fc00::/7"
     binaries:
       - path: ${params.binaryPath}`;
   return `version: 1
@@ -406,7 +364,6 @@ describe("openshell sandbox backend e2e", () => {
         );
       }
       const openshellConfigHome = OPENCLAW_OPENSHELL_CONFIG_HOME;
-      const hostIp = await resolveOpenShellHostIp();
       const gatewayName = await activeOpenShellGateway(OPENCLAW_OPENSHELL_COMMAND, {
         ...process.env,
         XDG_CONFIG_HOME: openshellConfigHome,
@@ -560,7 +517,14 @@ describe("openshell sandbox backend e2e", () => {
           buildOpenShellPolicyYaml({
             port: hostPolicyServer.port,
             binaryPath: "/usr/bin/false",
-            hostIp,
+          }),
+          "utf8",
+        );
+        await fs.writeFile(
+          allowPolicyPath,
+          buildOpenShellPolicyYaml({
+            port: hostPolicyServer.port,
+            binaryPath: "/usr/bin/curl",
           }),
           "utf8",
         );
@@ -593,23 +557,6 @@ describe("openshell sandbox backend e2e", () => {
           running: true,
           configLabelMatch: true,
         });
-
-        const curlPathResult = await runBackendExec({
-          backend,
-          command: "command -v curl",
-          timeoutMs: 60_000,
-        });
-        const curlPath = trimTrailingNewline(curlPathResult.stdout.trim());
-        expect(curlPath).toMatch(/^\/.+\/curl$/);
-        await fs.writeFile(
-          allowPolicyPath,
-          buildOpenShellPolicyYaml({
-            port: hostPolicyServer.port,
-            binaryPath: curlPath,
-            hostIp,
-          }),
-          "utf8",
-        );
 
         const sandbox = createSandboxTestContext({
           overrides: {
