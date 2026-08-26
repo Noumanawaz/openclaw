@@ -183,6 +183,10 @@
               }
             ]
           },
+          "replyToMode": {
+            "type": "string",
+            "enum": ["off", "all"]
+          },
           "groupPolicy": {
             "default": "allowlist",
             "type": "string",

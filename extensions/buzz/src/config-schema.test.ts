@@ -86,6 +86,31 @@ describe("BuzzConfigSchema", () => {
     }
   });
   it.each([
+    ["off", true],
+    ["all", true],
+    ["first", false],
+    ["batched", false],
+    [false, false],
+  ])("validates replyToMode %s in runtime and manifest schemas", (replyToMode, valid) => {
+    const config = { replyToMode, groupPolicy: "allowlist" };
+    const manifest: {
+      channelConfigs: { buzz: { schema: Parameters<typeof validateJsonSchemaValue>[0]["schema"] } };
+    } = JSON.parse(readFileSync(new URL("../openclaw.plugin.json", import.meta.url), "utf8"));
+    expect(parseBuzzConfig(config).success).toBe(valid);
+    for (const [name, schema] of [
+      ["runtime", BuzzConfigSchema.schema],
+      ["manifest", manifest.channelConfigs.buzz.schema],
+    ] as const) {
+      expect(
+        validateJsonSchemaValue({
+          cacheKey: `buzz.reply-mode.${name}.${replyToMode}`,
+          schema,
+          value: config,
+        }).ok,
+      ).toBe(valid);
+    }
+  });
+  it.each([
     "ws://localhost:3000",
     "wss://buzz.example.com/relay",
     "Ws://localhost:3000",
