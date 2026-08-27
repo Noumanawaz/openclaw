@@ -1,0 +1,89 @@
+name: CI Test Timings Refit
+
+on:
+  schedule:
+    - cron: "43 9 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ci-test-timings-refit
+  cancel-in-progress: false
+
+jobs:
+  refit:
+    if: github.repository == 'openclaw/openclaw' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          cache-mode: restore
+          install-bun: "false"
+
+      - name: Refit measured test timings
+        id: refit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm --silent ci:timings:refit > "$RUNNER_TEMP/ci-test-timings-report.md"
+          if ! git diff --quiet -- config/ci-test-timings.json; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update standing refit pull request
+        if: steps.refit.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch=ci/test-timings-refit
+          title='ci: refresh measured test timings'
+          body="$RUNNER_TEMP/ci-test-timings-pr.md"
+          cat > "$body" <<'EOF'
+          ## What Problem This Solves
+
+          Refresh stale CI shard weights from successful main CI runs.
+
+          ## Why This Change Was Made
+
+          The daily refit uses medians, rejects outliers and single samples, and keeps existing weights when the new median is within 15% of them.
+
+          ## User Impact
+
+          Only shard balance changes; test discovery still determines the complete test inventory. This standing branch is updated automatically and never pushes to main.
+
+          ## Evidence
+
+          Generated with `pnpm ci:timings:refit`:
+
+          EOF
+          cat "$RUNNER_TEMP/ci-test-timings-report.md" >> "$body"
+          gh auth setup-git
+          previous=$(git ls-remote origin "refs/heads/$branch" | cut -f1)
+          git switch -c "$branch"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- config/ci-test-timings.json
+          git -c core.hooksPath=/dev/null commit -m "$title"
+          git push --force-with-lease="refs/heads/$branch:$previous" origin "HEAD:refs/heads/$branch"
+          pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --base main --state open --limit 1 --json number --jq '.[0].number // empty')
+          if [ -n "$pr" ]; then
+            gh pr edit "$pr" --repo "$GITHUB_REPOSITORY" --title "$title" --body-file "$body"
+          else
+            gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$branch" --title "$title" --body-file "$body"
+          fi

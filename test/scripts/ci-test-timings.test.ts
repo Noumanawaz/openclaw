@@ -1,0 +1,326 @@
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { refitTestTimings, type CiTimingRun } from "../../scripts/lib/ci-test-timings-refit.mts";
+import {
+  ciTestTimingsSchema,
+  type CiTestTimings,
+} from "../../scripts/lib/ci-test-timings-schema.mts";
+
+function uiLog(files: Record<string, number>, overhead = 0.6) {
+  const body = Object.values(files).reduce((sum, value) => sum + value, 0);
+  return [
+    ...Object.entries(files).map(
+      ([name, value]) =>
+        `2026-08-27T23:00:00Z ✓ \u001b[32mui-e2e\u001b[0m ${name} (1 test) ${value * 1000}ms`,
+    ),
+    `Duration ${body + Object.keys(files).length * overhead}s (transform 1s, setup 2ms, import 3s, tests ${body}s, environment 1ms)`,
+  ].join("\n");
+}
+
+function timingRun(id: number, logs: CiTimingRun["logs"]): CiTimingRun {
+  return { id, createdAt: `2026-08-${String(20 + id).padStart(2, "0")}T23:00:00Z`, logs };
+}
+
+function compactLog(seconds: number, profile: "blacksmith" | "github") {
+  const end = new Date(Date.parse("2026-08-27T23:00:00Z") + seconds * 1000).toISOString();
+  return [
+    "2026-08-27T23:00:00.0000000Z [shard:core-unit-src-security-2] begin",
+    `${end} [shard:core-unit-src-security-2] end (exit 0)`,
+    "2026-08-27T23:00:00Z [shard:failed] begin",
+    `${end} [shard:failed] end (exit 1)`,
+    "2026-08-27T23:00:00Z [shard:unfinished] begin",
+    `${end} [shard:orphan] end (exit 0)`,
+    profile === "blacksmith" ? "2026-08-27T23:05:00Z   BLACKSMITH_RUN_ID: fixture" : "",
+  ].join("\n");
+}
+
+const measuredFile = "ui/src/e2e/measured.e2e.test.ts";
+const baseline: CiTestTimings = {
+  compactGroupSeconds: { blacksmith: {}, github: {} },
+  source: "median of 2 successful main CI runs: 1, 2",
+  uiE2e: { fileSeconds: { [measuredFile]: 100 }, perFileOverheadSeconds: 0.6 },
+  updatedAt: "2026-08-22",
+  version: 1,
+};
+
+describe("CI test timing refit", () => {
+  it("records per-file medians without outliers or one-run weights and measures excluded overhead", () => {
+    const pageFile = "ui/src/pages/settings/measured.e2e.test.ts";
+    const singleFile = "ui/src/e2e/single.e2e.test.ts";
+    const runs = [32, 34, 60, 33, 900].map((value, index) =>
+      timingRun(index + 1, [
+        { kind: "uiE2e", text: uiLog({ [measuredFile]: value, [pageFile]: 2 }, 0.64) },
+      ]),
+    );
+    runs[0]!.logs.push({
+      kind: "uiE2e",
+      text: `ui-e2e ${singleFile} (20 tests) 3s\nui-e2e ${singleFile} (20 tests) 3s`,
+    });
+
+    const { timings } = refitTestTimings(runs);
+
+    expect(timings.uiE2e).toEqual({
+      fileSeconds: { [measuredFile]: 34, [pageFile]: 2 },
+      perFileOverheadSeconds: 0.6,
+    });
+    expect(ciTestTimingsSchema.safeParse(timings).success).toBe(true);
+  });
+
+  it("buckets successful compact spans by their job runner and excludes failed or incomplete spans", () => {
+    const runs = [10, 20, 100].map((value, index) =>
+      timingRun(index + 1, [
+        { kind: "compact", text: compactLog(value, "blacksmith") },
+        { kind: "compact", text: compactLog(40 + index * 10, "github") },
+      ]),
+    );
+
+    expect(refitTestTimings(runs).timings.compactGroupSeconds).toEqual({
+      blacksmith: { "core-unit-src-security-2": 15 },
+      github: { "core-unit-src-security-2": 50 },
+    });
+  });
+
+  it.each([
+    [85, 100],
+    [115, 100],
+    [84, 84],
+    [116, 116],
+  ])("only writes medians outside the inclusive 15%% band: %s becomes %s", (measured, expected) => {
+    const previous = {
+      ...baseline,
+      uiE2e: {
+        ...baseline.uiE2e,
+        fileSeconds: { ...baseline.uiE2e.fileSeconds, "ui/src/e2e/absent.e2e.test.ts": 20 },
+      },
+    };
+    const runs = [1, 2].map((id) =>
+      timingRun(id, [{ kind: "uiE2e", text: uiLog({ [measuredFile]: measured }) }]),
+    );
+    const { timings, changes } = refitTestTimings(runs, previous);
+
+    expect(timings.uiE2e.fileSeconds).toEqual({
+      [measuredFile]: expected,
+      "ui/src/e2e/absent.e2e.test.ts": 20,
+    });
+    expect(changes).toHaveLength(expected === 100 ? 0 : 1);
+    if (expected === 100) {
+      expect(timings.source).toBe(previous.source);
+      expect(timings.updatedAt).toBe(previous.updatedAt);
+    }
+  });
+
+  it("applies the overhead write threshold before rounding to a tenth", () => {
+    const runs = [1, 2].map((id) =>
+      timingRun(id, [{ kind: "uiE2e", text: uiLog({ [measuredFile]: 100 }, 0.69) }]),
+    );
+    const { timings, changes } = refitTestTimings(runs, baseline);
+    expect(timings.uiE2e.perFileOverheadSeconds).toBe(0.6);
+    expect(changes).toEqual([]);
+  });
+
+  it.each([
+    [-2, 0],
+    [8, 5],
+  ])("clamps measured overhead %s to %s seconds", (measured, expected) => {
+    const runs = [1, 2].map((id) =>
+      timingRun(id, [{ kind: "uiE2e", text: uiLog({ [measuredFile]: 10 }, measured) }]),
+    );
+    expect(refitTestTimings(runs).timings.uiE2e.perFileOverheadSeconds).toBe(expected);
+  });
+
+  it("generates identical sorted data when equivalent runs, logs, and file rows arrive in different orders", () => {
+    const files = { "ui/src/e2e/z.e2e.test.ts": 5, "ui/src/e2e/a.e2e.test.ts": 4 };
+    const runs = [2, 1].map((id) =>
+      timingRun(id, [
+        { kind: "compact", text: compactLog(20, "github") },
+        { kind: "uiE2e", text: uiLog(files) },
+      ]),
+    );
+    const first = refitTestTimings(runs);
+    const reordered = runs.toReversed().map((run) => ({
+      ...run,
+      logs: [
+        {
+          kind: "uiE2e" as const,
+          text: uiLog(Object.fromEntries(Object.entries(files).toReversed())),
+        },
+        { kind: "compact" as const, text: compactLog(20, "github") },
+      ],
+    }));
+
+    expect(JSON.stringify(refitTestTimings(reordered))).toBe(JSON.stringify(first));
+    expect(Object.keys(first.timings)).toEqual(Object.keys(first.timings).toSorted());
+    expect(Object.keys(first.timings.uiE2e.fileSeconds)).toEqual([
+      "ui/src/e2e/a.e2e.test.ts",
+      "ui/src/e2e/z.e2e.test.ts",
+    ]);
+    expect(
+      refitTestTimings(
+        runs.map((run) => ({ ...run, id: run.id + 2 })),
+        first.timings,
+      ).timings,
+    ).toEqual(first.timings);
+  });
+
+  it("fetches only successful matching job logs, paginates, and keeps dry-run and unchanged refits byte-stable", () => {
+    const directory = realpathSync(mkdtempSync(path.join(tmpdir(), "openclaw-ci-refit-")));
+    const fakeGh = path.join(directory, "gh");
+    const output = path.join(directory, "timings.json");
+    const root = fileURLToPath(new URL("../../", import.meta.url));
+    const log = uiLog({ [measuredFile]: 130 });
+    writeFileSync(
+      fakeGh,
+      `#!/usr/bin/env node
+const args = process.argv.slice(2);
+const endpoint = args[1];
+if (args[0] === "api" && args[1] === "--help") {
+  console.log("--allow-escape-sequences");
+} else if (endpoint === "repos/fixture/repo/actions/workflows/ci.yml/runs?branch=main&status=success&per_page=2&page=1") {
+  if (!args.includes("--jq")) process.exit(2);
+  console.log(JSON.stringify([1, 2].map(id => ({id, created_at: "2026-08-27T23:00:00Z", status: "completed", conclusion: "success"}))));
+} else if (endpoint.includes("actions/runs/") && endpoint.includes("/jobs?")) {
+  const jobs = endpoint.endsWith("page=1")
+    ? [{id: 1, name: "unrelated", conclusion: "success"}, {id: 2, name: "checks-ui-e2e (2/11)", conclusion: "failure"}]
+    : [{id: 3, name: "checks-ui-e2e (1/11)", conclusion: "success"}];
+  console.log(JSON.stringify({ total_count: 3, jobs }));
+} else if (endpoint.endsWith("actions/jobs/3/logs")) {
+  if (!args.includes("--allow-escape-sequences")) process.exit(2);
+  console.log(${JSON.stringify(log)});
+} else {
+  console.error("Unexpected gh request", args);
+  process.exit(2);
+}
+`,
+    );
+    chmodSync(fakeGh, 0o755);
+    const original = `${JSON.stringify(baseline, null, 2)}\n`;
+    writeFileSync(output, original);
+    const invoke = (dryRun: boolean) =>
+      spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          "scripts/ci-refit-test-timings.mts",
+          "--runs",
+          "2",
+          "--repo",
+          "fixture/repo",
+          "--out",
+          output,
+          ...(dryRun ? ["--dry-run"] : []),
+        ],
+        {
+          cwd: root,
+          encoding: "utf8",
+          env: { ...process.env, OPENCLAW_GH_BIN: fakeGh, GH_TOKEN: "fixture-token" },
+        },
+      );
+    try {
+      const dryRun = invoke(true);
+      expect(dryRun.status, dryRun.stderr).toBe(0);
+      expect(dryRun.stdout).toContain(`| uiE2e.fileSeconds.${measuredFile} | 100 | 130 | 30.0% |`);
+      expect(dryRun.stdout).toContain("Sampled successful main CI runs: 1, 2");
+      expect(readFileSync(output, "utf8")).toBe(original);
+      const write = invoke(false);
+      expect(write.status, write.stderr).toBe(0);
+      const updated = readFileSync(output, "utf8");
+      expect(ciTestTimingsSchema.parse(JSON.parse(updated)).uiE2e.fileSeconds[measuredFile]).toBe(
+        130,
+      );
+      expect(updated.endsWith("\n")).toBe(true);
+      const unchanged = invoke(false);
+      expect(unchanged.status, unchanged.stderr).toBe(0);
+      expect(unchanged.stdout).toContain("No timing changes");
+      expect(readFileSync(output, "utf8")).toBe(updated);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("committed CI timing loader", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    syncBuiltinESMExports();
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  async function readTimings(contents: string | Error) {
+    vi.resetModules();
+    vi.stubEnv("OPENCLAW_CI_TEST_TIMINGS", undefined);
+    const original = fs.readFileSync;
+    const timingPath = fileURLToPath(new URL("../../config/ci-test-timings.json", import.meta.url));
+    const read = vi.spyOn(fs, "readFileSync").mockImplementation((file, options) => {
+      if ((file instanceof URL ? fileURLToPath(file) : file) === timingPath) {
+        if (contents instanceof Error) {
+          throw contents;
+        }
+        return contents;
+      }
+      return original(file, options);
+    });
+    syncBuiltinESMExports();
+    const loader = await import("../../scripts/lib/ci-test-timings.mts");
+    return { loader, read, timingPath };
+  }
+
+  const invalidFiles: Array<[string, string | Error]> = [
+    ["missing", new Error("ENOENT")],
+    ["unreadable", new Error("EACCES")],
+    ["truncated", '{"version":1'],
+    ["non-object root", "null"],
+    ["wrong version", JSON.stringify({ ...baseline, version: 2 })],
+    [
+      "non-object map",
+      JSON.stringify({ ...baseline, uiE2e: { ...baseline.uiE2e, fileSeconds: [] } }),
+    ],
+    ["missing profile", JSON.stringify({ ...baseline, compactGroupSeconds: { blacksmith: {} } })],
+    ...[0, -1, "2", null, 1.2].map((seconds): [string, string] => [
+      `invalid seconds ${String(seconds)}`,
+      JSON.stringify({
+        ...baseline,
+        compactGroupSeconds: { blacksmith: { group: seconds }, github: {} },
+      }),
+    ]),
+    ["non-finite seconds", JSON.stringify(baseline).replace(":100", ":1e999")],
+    [
+      "negative overhead",
+      JSON.stringify({ ...baseline, uiE2e: { ...baseline.uiE2e, perFileOverheadSeconds: -1 } }),
+    ],
+  ];
+
+  it.each(invalidFiles)("ignores the entire %s file without throwing", async (_name, contents) => {
+    const { loader } = await readTimings(contents);
+    expect(loader.readUiE2eFileTimings()).toEqual({ fileSeconds: {}, perFileOverheadSeconds: 0 });
+    expect(loader.readCompactGroupTimings("blacksmith")).toEqual({});
+    expect(loader.readCompactGroupTimings("github")).toEqual({});
+  });
+
+  it("reads the repo-relative file once and honors the disable switch even after caching", async () => {
+    const data = {
+      ...baseline,
+      compactGroupSeconds: { blacksmith: { group: 110 }, github: { group: 181 } },
+    };
+    const { loader, read, timingPath } = await readTimings(JSON.stringify(data));
+    expect(loader.readUiE2eFileTimings()).toEqual(data.uiE2e);
+    expect(loader.readCompactGroupTimings("blacksmith")).toEqual({ group: 110 });
+    expect(loader.readCompactGroupTimings("github")).toEqual({ group: 181 });
+    vi.stubEnv("OPENCLAW_CI_TEST_TIMINGS", "0");
+    expect(loader.readUiE2eFileTimings()).toEqual({ fileSeconds: {}, perFileOverheadSeconds: 0 });
+    expect(loader.readCompactGroupTimings("blacksmith")).toEqual({});
+    expect(loader.readCompactGroupTimings("github")).toEqual({});
+    vi.stubEnv("OPENCLAW_CI_TEST_TIMINGS", undefined);
+    expect(loader.readCompactGroupTimings("github")).toEqual({ group: 181 });
+    expect(
+      read.mock.calls.filter(([file]) => file instanceof URL && fileURLToPath(file) === timingPath),
+    ).toHaveLength(1);
+  });
+});
