@@ -15,6 +15,7 @@ import {
   SHORT_SESSION_ID_RE,
 } from "../../packages/session-url-contract/src/index.js";
 import { listAgentIds } from "../agents/agent-scope.js";
+import { getSessionDisplaySubagentRunByChildSessionKey } from "../agents/subagents/registry/subagent-registry-read.js";
 import type { SessionEntry } from "../config/sessions.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { parseAgentSessionKey } from "../routing/session-key.js";
@@ -22,6 +23,7 @@ import { resolveSessionIdMatchSelection } from "../sessions/session-id-resolutio
 import { parseSessionLabel } from "../sessions/session-label.js";
 import { hasOperatorBoundary } from "./operator-role-policy.js";
 import type { GatewayClient } from "./server-methods/types.js";
+import { isDirectChildSessionEntry } from "./session-child-sessions.js";
 import { resolveRequestedSessionAgentId } from "./session-request-agent.js";
 import { createSessionListEntryFilter } from "./session-sharing.js";
 import {
@@ -78,21 +80,36 @@ function validateSessionAgentExists(
   };
 }
 
-function isResolvedSessionKeyVisible(params: {
-  cfg: OpenClawConfig;
+/**
+ * Exact-key spawnedBy checks answer spawn-lineage ownership (they back
+ * sessions_history/sessions_send tree authorization), not list discovery.
+ * Durable parent linkage on the stored entry — or the live run controller —
+ * authorizes regardless of the display liveness windows that bound child
+ * listings, so a recovered or long-ended child stays reachable to its parent.
+ */
+function isResolvedSessionKeyOwnedBySpawner(params: {
   p: SessionsResolveParams;
   store: Record<string, SessionEntry>;
   key: string;
-}) {
-  if (typeof params.p.spawnedBy !== "string" || params.p.spawnedBy.trim().length === 0) {
+}): boolean {
+  const spawnedBy = normalizeOptionalString(params.p.spawnedBy);
+  if (!spawnedBy) {
     return true;
   }
-  return filterAndSortSessionEntries({
-    cfg: params.cfg,
-    store: params.store,
-    now: Date.now(),
-    opts: resolveSessionVisibilityFilterOptions(params.p),
-  }).some(([key]) => key === params.key);
+  if (
+    isDirectChildSessionEntry({
+      sessionKey: params.key,
+      entry: params.store[params.key],
+      parentKey: spawnedBy,
+    })
+  ) {
+    return true;
+  }
+  const run = getSessionDisplaySubagentRunByChildSessionKey(params.key);
+  const controller =
+    normalizeOptionalString(run?.controllerSessionKey) ??
+    normalizeOptionalString(run?.requesterSessionKey);
+  return controller === spawnedBy;
 }
 
 function findVisibleSessionIdMatches(params: {
@@ -226,8 +243,7 @@ export async function resolveSessionKeyFromResolveParams(params: {
     if (entry) {
       if (
         (hasOperatorBoundary(client, cfg) && entryFilter?.(target.canonicalKey, entry) === false) ||
-        !isResolvedSessionKeyVisible({
-          cfg,
+        !isResolvedSessionKeyOwnedBySpawner({
           p,
           store,
           key: target.canonicalKey,

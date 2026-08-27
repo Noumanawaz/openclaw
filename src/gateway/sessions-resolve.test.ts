@@ -2,6 +2,8 @@
 // agent scoping, listed-session selection, and protocol error mapping.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ErrorCodes } from "../../packages/gateway-protocol/src/index.js";
+import { createSubagentRunRecord } from "../agents/subagent-test-fixtures.test-helpers.js";
+import { subagentRuns } from "../agents/subagents/registry/subagent-registry-memory.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 
 const hoisted = vi.hoisted(() => ({
@@ -118,6 +120,69 @@ describe("resolveSessionKeyFromResolveParams", () => {
     targetStore = store;
 
     await expectResolveToCanonicalKey({ key: canonicalKey, spawnedBy: "controller-1" });
+  });
+
+  it("authorizes durable spawn lineage after the display liveness window expires", async () => {
+    // Exact-key spawnedBy resolution is spawn ownership, not child-listing
+    // display: a long-ended child stays reachable to its recorded parent.
+    targetStore = {
+      [canonicalKey]: {
+        sessionId: "sess-old-child",
+        spawnedBy: "controller-1",
+        parentSessionKey: "controller-1",
+        updatedAt: Date.now() - 3 * 60 * 60 * 1_000,
+        endedAt: Date.now() - 3 * 60 * 60 * 1_000,
+      },
+    };
+
+    await expectResolveToCanonicalKey({ key: canonicalKey, spawnedBy: "controller-1" });
+  });
+
+  it("keeps durable spawn lineage authoritative when a live run is controlled elsewhere", async () => {
+    targetStore = {
+      [canonicalKey]: {
+        sessionId: "sess-steered-child",
+        spawnedBy: "controller-1",
+        updatedAt: Date.now(),
+      },
+    };
+    subagentRuns.set(
+      "run-steered",
+      createSubagentRunRecord({
+        runId: "run-steered",
+        childSessionKey: canonicalKey,
+        requesterSessionKey: "agent:main:other",
+        controllerSessionKey: "agent:main:other",
+        requesterDisplayKey: "other",
+        startedAt: Date.now(),
+      }),
+    );
+    try {
+      await expectResolveToCanonicalKey({ key: canonicalKey, spawnedBy: "controller-1" });
+    } finally {
+      subagentRuns.delete("run-steered");
+    }
+  });
+
+  it("authorizes the live run controller without stored lineage", async () => {
+    targetStore = {
+      [canonicalKey]: { sessionId: "sess-adopted-child", updatedAt: Date.now() },
+    };
+    subagentRuns.set(
+      "run-adopted",
+      createSubagentRunRecord({
+        runId: "run-adopted",
+        childSessionKey: canonicalKey,
+        requesterSessionKey: "controller-1",
+        requesterDisplayKey: "controller-1",
+        startedAt: Date.now(),
+      }),
+    );
+    try {
+      await expectResolveToCanonicalKey({ key: canonicalKey, spawnedBy: "controller-1" });
+    } finally {
+      subagentRuns.delete("run-adopted");
+    }
   });
 
   it("rejects legacy keys with doctor repair guidance", async () => {

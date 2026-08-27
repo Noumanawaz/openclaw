@@ -13,8 +13,13 @@ type DirectChildSessionEntry = {
   entry: SessionEntry;
 };
 
-/** Returns true when a session store row is a direct child of the parent key. */
-function isDirectChildSessionEntry(params: {
+/**
+ * Returns true when a session store row is a direct child of the parent key.
+ *
+ * This is the durable spawn-lineage fact (entry.spawnedBy/parentSessionKey);
+ * ownership decisions consult it directly instead of display projections.
+ */
+export function isDirectChildSessionEntry(params: {
   sessionKey: string;
   entry: SessionEntry | undefined;
   parentKey: string;

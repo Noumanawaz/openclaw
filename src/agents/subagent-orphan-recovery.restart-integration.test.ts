@@ -7,6 +7,7 @@ import { getRuntimeConfig, setRuntimeConfigSnapshot } from "../config/config.js"
 import { resolveAgentIdFromSessionKey, resolveSessionStorePathCore } from "../config/sessions.js";
 import type { CallGatewayOptions } from "../gateway/call.js";
 import type { GatewayRecoveryRuntime } from "../gateway/server-instance-runtime.types.js";
+import { resolveSessionKeyFromResolveParams } from "../gateway/sessions-resolve.js";
 import {
   getAgentEventLifecycleGeneration,
   rotateAgentEventLifecycleGeneration,
@@ -46,6 +47,8 @@ import {
   testing,
 } from "./subagents/registry/subagent-registry.test-helpers.js";
 import type { SubagentRunRecord } from "./subagents/registry/subagent-registry.types.js";
+import type { AgentToolGatewayRequestCaller } from "./tools/in-process-gateway.js";
+import { resolveSessionToolAccess } from "./tools/sessions-access.js";
 
 function consumeRecoveryAdmission(payload: Record<string, unknown>): SessionWorkAdmissionLease {
   const sessionKey = String(payload.sessionKey);
@@ -234,6 +237,77 @@ describe("subagent orphan recovery — faithful restart path", () => {
     expect(getSubagentRunByChildSessionKey(childSessionKey)?.runId).toBe(
       String(dispatchAgent.mock.calls[0]?.[0].idempotencyKey),
     );
+  });
+
+  it("keeps parent history/send tree authorization after restart recovery ends", async () => {
+    const now = Date.now();
+    const parentSessionKey = "agent:main:parent-session";
+    const childSessionKey = "agent:main:subagent:recovered-child";
+    const storePath = await writeSubagentSessionEntry({
+      stateDir: tempStateDir!,
+      agentId: "main",
+      sessionKey: childSessionKey,
+      sessionId: "sess-recovered-child",
+      updatedAt: now,
+      abortedLastRun: true,
+      defaultSessionId: "sess-recovered-child",
+      spawnedBy: parentSessionKey,
+      parentSessionKey,
+    });
+    addSubagentRunForTests(
+      makeRunRecord({
+        runId: "run-recovered-child",
+        childSessionKey,
+        requesterSessionKey: parentSessionKey,
+        createdAt: now - 60_000,
+        startedAt: now - 55_000,
+      }),
+    );
+
+    await testing.sweepOnceForTests();
+
+    expect(dispatchAgent).toHaveBeenCalledOnce();
+    const recovered = getSubagentRunByChildSessionKey(childSessionKey);
+    expect(recovered?.runId).toMatch(/^subagent-recovery:/);
+    // The recovered run later finishes and ages out of the child-listing
+    // display window; durable parent lineage must keep authorizing access.
+    recovered!.execution = {
+      ...recovered!.execution,
+      status: "terminal",
+      endedAt: Date.now() - 31 * 60_000,
+    };
+
+    const persisted = (await readSubagentSessionStore(storePath))[childSessionKey];
+    expect(persisted).toMatchObject({ spawnedBy: parentSessionKey, parentSessionKey });
+
+    const callGateway: AgentToolGatewayRequestCaller = async ({ method, params }) => {
+      if (method !== "sessions.resolve") {
+        throw new Error(`unexpected gateway method: ${method}`);
+      }
+      const resolved = await resolveSessionKeyFromResolveParams({
+        cfg: getRuntimeConfig(),
+        client: null,
+        p: params as never,
+      });
+      if (!resolved.ok) {
+        throw new Error(resolved.error.message);
+      }
+      return ("missing" in resolved ? { ok: false } : resolved) as never;
+    };
+    for (const action of ["history", "send"] as const) {
+      const access = await resolveSessionToolAccess({
+        action,
+        requesterAgentId: "main",
+        requesterSessionKey: parentSessionKey,
+        targetAgentId: "main",
+        targetSessionKey: childSessionKey,
+        requesterOwned: false,
+        visibility: "tree",
+        a2aPolicy: { enabled: false, isAllowed: () => false },
+        callGateway,
+      });
+      expect(access).toMatchObject({ allowed: true });
+    }
   });
 
   it("preserves an accepted response across a consumed-receipt write failure", async () => {
