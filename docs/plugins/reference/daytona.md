@@ -12,7 +12,7 @@ OpenClaw sandbox backend that runs agent exec and file tools inside Daytona clou
 ## Distribution
 
 - Package: `@openclaw/daytona-sandbox`
-- Install route: npm; ClawHub
+- Install route: npm; ClawHub: `clawhub:@openclaw/daytona-sandbox`
 
 ## Surface
 
