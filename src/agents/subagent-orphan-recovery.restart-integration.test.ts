@@ -303,7 +303,7 @@ describe("subagent orphan recovery — faithful restart path", () => {
         targetSessionKey: childSessionKey,
         requesterOwned: false,
         visibility: "tree",
-        a2aPolicy: { enabled: false, isAllowed: () => false },
+        a2aPolicy: { enabled: false, matchesAllow: () => false, isAllowed: () => false },
         callGateway,
       });
       expect(access).toMatchObject({ allowed: true });
