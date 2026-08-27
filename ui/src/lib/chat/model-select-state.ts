@@ -53,11 +53,17 @@ export type ChatFastModeSelectState = {
   supported: boolean;
 };
 
+export type ChatFastModeTarget = Pick<
+  GatewaySessionRow,
+  "effectiveFastMode" | "fastMode" | "model" | "modelProvider"
+>;
+
 type ChatFastModeSelectStateInput = {
   activeRunId: string | null;
   catalog: ModelCatalogEntry[];
   connected: boolean;
   currentModelOverride: string;
+  fastModeTarget?: ChatFastModeTarget;
   gatewayAvailable: boolean;
   loading: boolean;
   sending: boolean;
@@ -312,9 +318,11 @@ function resolveFastModeProvider(
 export function resolveChatFastModeSelectState(
   input: ChatFastModeSelectStateInput,
 ): ChatFastModeSelectState {
-  const activeRow = input.sessionsResult?.sessions?.find((row) =>
-    areUiSessionKeysEquivalent(row.key, input.sessionKey),
-  );
+  const activeRow =
+    input.fastModeTarget ??
+    input.sessionsResult?.sessions?.find((row) =>
+      areUiSessionKeysEquivalent(row.key, input.sessionKey),
+    );
   const activeProvider = normalizeChatModelProviderId(activeRow?.modelProvider ?? "") || null;
   const defaultProvider =
     normalizeChatModelProviderId(input.sessionsResult?.defaults?.modelProvider ?? "") || null;

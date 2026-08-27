@@ -2,7 +2,7 @@ import type {
   SessionCatalog,
   SessionsCatalogListResult,
 } from "../../../../packages/gateway-protocol/src/index.ts";
-import type { GatewayAgentRow, ModelCatalogEntry } from "../../api/types.ts";
+import type { FastMode, GatewayAgentRow, ModelCatalogEntry } from "../../api/types.ts";
 import type { ApplicationContext } from "../../app/context.ts";
 import { t } from "../../i18n/index.ts";
 import {
@@ -15,7 +15,10 @@ import {
   normalizeChatModelProviderId,
   resolvePreferredServerChatModelValue,
 } from "../../lib/chat/model-ref.ts";
-import { isChatModelUnavailable } from "../../lib/chat/model-select-state.ts";
+import {
+  isChatModelUnavailable,
+  normalizeChatFastModeInput,
+} from "../../lib/chat/model-select-state.ts";
 import { normalizeThinkingOptionValue } from "../../lib/chat/thinking.ts";
 import { isGatewayMethodAdvertised } from "../../lib/gateway-methods.ts";
 import { loadModels } from "../../lib/model-catalog-store.ts";
@@ -129,6 +132,7 @@ export class NewSessionModelControl {
   selected = "";
   contextWindow = "";
   thinkingLevel = "";
+  fastMode: FastMode | undefined;
 
   constructor(
     private readonly notify: () => void,
@@ -392,6 +396,7 @@ export class NewSessionModelControl {
       this.selected = "";
       this.contextWindow = "";
       this.thinkingLevel = "";
+      this.fastMode = undefined;
       this.updateMetadataState({
         catalog: [],
         hasSnapshot: false,
@@ -428,6 +433,7 @@ export class NewSessionModelControl {
       this.selected = "";
       this.contextWindow = "";
       this.thinkingLevel = "";
+      this.fastMode = undefined;
       this.metadataState = {
         catalog: [],
         hasSnapshot: false,
@@ -665,13 +671,17 @@ export class NewSessionModelControl {
               ...(contextWindowDefault ? { contextWindowDefault } : {}),
             }
           : undefined,
+      fastModeTarget: {
+        model: selectedTarget?.model ?? defaultTarget?.model,
+        modelProvider: selectedTarget?.provider ?? defaultTarget?.provider ?? undefined,
+        fastMode: this.fastMode,
+      },
       modelOverrides: { [sessionKey]: this.selected },
       modelPickerTargetGroups: this.catalogTargetGroups(),
       modelSwitching: false,
       sending: options.sending,
       sessionKey,
       sessionsResult: sourceResult,
-      showFastMode: false,
       stream: null,
       thinkingDefaults,
       thinkingSession: thinkingTarget,
@@ -699,6 +709,12 @@ export class NewSessionModelControl {
         this.restoringPreference = false;
         this.thinkingLevel = value;
         this.onSelectionChange({ model: this.selected, thinkingLevel: this.thinkingLevel });
+      },
+      onFastModeSelect: (value) => {
+        this.selectionGeneration += 1;
+        this.restoringPreference = false;
+        this.fastMode = normalizeChatFastModeInput(value);
+        this.notify();
       },
       onContextWindowSelect: (value) => {
         this.selectionGeneration += 1;
