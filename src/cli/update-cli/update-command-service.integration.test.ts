@@ -763,19 +763,24 @@ describe("preserved update activation with real version guards", () => {
     mocks.launchctl.mockImplementation(async (args) => {
       if (args[0] === "bootstrap") {
         if (scenario === "bootstrap denied") {
-          return { code: 13, stdout: "", stderr: "permission denied" };
+          return { code: 13, stdout: "", stderr: "permission denied", termination: "exit" };
         }
         loaded = true;
         nativeRunning = !demandOnly;
       }
       if ((args[0] === "print" || args[0] === "kickstart") && !loaded) {
-        return { code: 113, stdout: "", stderr: "Could not find service" };
+        return { code: 113, stdout: "", stderr: "Could not find service", termination: "exit" };
       }
       if (args[0] === "kickstart") {
         nativeRunning = true;
       }
       const state = nativeRunning ? "running" : "stopped";
-      return { code: 0, stdout: args[0] === "print" ? `state = ${state}\n` : "", stderr: "" };
+      return {
+        code: 0,
+        stdout: args[0] === "print" ? `state = ${state}\n` : "",
+        stderr: "",
+        termination: "exit",
+      };
     });
     if (demandOnly) {
       mocks.health.mockImplementation(async ({ port }) => ({

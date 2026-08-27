@@ -164,6 +164,7 @@ describe("runDaemonInstall integration", () => {
       });
       busctl.mockImplementation(async (_env, args) => ({
         code: 0,
+        termination: "exit",
         stderr: "",
         stdout: (args.includes("LoadUnit")
           ? [{ type: "o", data: ["/org/freedesktop/systemd1/unit/owned"] }]
@@ -257,6 +258,7 @@ describe("runDaemonInstall integration", () => {
     });
     busctl.mockImplementation(async (_env, args) => ({
       code: 0,
+      termination: "exit",
       stderr: "",
       stdout: (args.includes("LoadUnit")
         ? [{ type: "o", data: ["/org/freedesktop/systemd1/unit/owned"] }]
