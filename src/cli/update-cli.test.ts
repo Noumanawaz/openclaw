@@ -7834,10 +7834,11 @@ describe("update-cli", () => {
         spec: "post-plugin@1.0.0",
       },
     } satisfies Record<string, PluginInstallRecord>;
-    vi.mocked(readConfigFileSnapshot)
-      .mockResolvedValueOnce(preDoctorSnapshot)
-      .mockResolvedValueOnce(postDoctorSnapshot)
-      .mockResolvedValueOnce(postDoctorSnapshot);
+    let currentSnapshot = preDoctorSnapshot;
+    vi.mocked(readConfigFileSnapshot).mockImplementation(async () => currentSnapshot);
+    vi.mocked(doctorCommand).mockImplementationOnce(async () => {
+      currentSnapshot = postDoctorSnapshot;
+    });
     loadInstalledPluginIndexInstallRecords.mockResolvedValueOnce(postDoctorRecords);
     syncPluginsForUpdateChannel.mockImplementationOnce(
       async (params: { config?: OpenClawConfig }) =>
@@ -7939,12 +7940,11 @@ describe("update-cli", () => {
       parsed: baseSnapshot.parsed,
       hash: "post-doctor",
     });
-    vi.mocked(readConfigFileSnapshot)
-      .mockResolvedValueOnce(preDoctorSnapshot)
-      .mockResolvedValueOnce(preDoctorSnapshot)
-      .mockResolvedValueOnce(preDoctorSnapshot)
-      .mockResolvedValueOnce(postDoctorSnapshot)
-      .mockResolvedValueOnce(postDoctorSnapshot);
+    let currentSnapshot = preDoctorSnapshot;
+    vi.mocked(readConfigFileSnapshot).mockImplementation(async () => currentSnapshot);
+    vi.mocked(doctorCommand).mockImplementationOnce(async () => {
+      currentSnapshot = postDoctorSnapshot;
+    });
 
     await updateFinalizeCommand({ channel: "dev", json: true, restart: false });
 
