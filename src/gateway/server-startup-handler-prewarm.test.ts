@@ -61,7 +61,7 @@ afterEach(() => {
 });
 
 describe("scheduleGatewayHandlerPrewarm", () => {
-  it("warms bounded session and process-stable plugin data in dashboard order", async () => {
+  it("warms the full session roster and process-stable plugin data in dashboard order", async () => {
     vi.useFakeTimers();
     const cfg = {
       agents: { list: [{ id: "main", default: true }, { id: "research" }] },
@@ -101,7 +101,6 @@ describe("scheduleGatewayHandlerPrewarm", () => {
           includeDerivedTitles: true,
           includeGlobal: true,
           includeUnknown: true,
-          limit: 60,
         },
       }),
     );

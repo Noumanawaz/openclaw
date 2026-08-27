@@ -67,7 +67,8 @@ suite.define(() => {
       // A literal key avoids the independent slug lookup while the roster is deferred.
       await page.goto(`${suite.server?.baseUrl ?? ""}chat/main/~key/ada`);
       const subscribe = await gateway.waitForRequest("sessions.subscribe");
-      expect(subscribe.params).toEqual(expect.objectContaining({ ownerFirst: true, limit: 60 }));
+      expect(subscribe.params).toEqual(expect.objectContaining({ ownerFirst: true }));
+      expect(subscribe.params).not.toHaveProperty("limit");
       const adaRow = page.locator('[data-session-key="agent:main:ada"]');
       const bobRow = page.locator('[data-session-key="agent:main:bob"]');
       // The selected session has an optimistic placeholder before roster hydration.

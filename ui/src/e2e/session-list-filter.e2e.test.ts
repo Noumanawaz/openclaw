@@ -168,7 +168,6 @@ suite.define(() => {
       includeGlobal: true,
       includeLastMessage: true,
       includeUnknown: true,
-      limit: 50,
     });
     expect
       .soft((await exactPageQueries()).map((request) => request.params))
@@ -237,7 +236,7 @@ suite.define(() => {
       (request) =>
         (request.params as { includeUnknown?: unknown } | undefined)?.includeUnknown === true,
     )?.params as Record<string, unknown> | undefined;
-    expect(sidebarParams).toMatchObject({ limit: 50 });
+    expect(sidebarParams).not.toHaveProperty("limit");
     expect(sidebarParams).not.toHaveProperty("activeMinutes");
 
     await currentPage.goto(`${suite.server?.baseUrl ?? ""}sessions`);

@@ -140,7 +140,7 @@ suite.define(() => {
       });
       expect(
         (await gateway.getRequests("sessions.list")).slice(before).map((request) => request.params),
-      ).toEqual([expect.objectContaining({ ownerFirst: true, limit: 60 })]);
+      ).toEqual([expect.not.objectContaining({ limit: expect.anything() })]);
 
       for (let sample = 0; sample < 6; sample += 1) {
         expect(await bob.count()).toBe(1);

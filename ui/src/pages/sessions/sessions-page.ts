@@ -460,7 +460,9 @@ class SessionsPage extends OpenClawLightDomElement {
   private sessionListOptions(context: ApplicationContext) {
     return sessionsPageListQuery(context, {
       activeMinutes: parseStrictPositiveInteger(this.activeMinutes),
-      limit: parseStrictPositiveInteger(this.limit),
+      // The Limit box is an explicit page size, so an unparseable entry falls
+      // back to the page default rather than silently requesting every session.
+      limit: parseStrictPositiveInteger(this.limit) ?? SESSIONS_PAGE_DEFAULT_LIMIT,
       includeGlobal: this.includeGlobal,
       includeUnknown: this.includeUnknown,
       statusFilter: this.statusFilter,
