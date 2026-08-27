@@ -35,12 +35,8 @@ const WORKER_WALLPAPER_PATH = fileURLToPath(
   new URL("../assets/openclaw-worker-wallpaper.png", import.meta.url),
 );
 const INSPECT_FAILURE_PREFIX = "Crabbox inspect failed with exit code 2: ";
-const PROFILE = {
-  provider: "aws",
-  class: "standard",
-  ttl: "24h",
-  idleTimeout: "60m",
-};
+const CLASSLESS_PROFILE = { provider: "aws", ttl: "24h", idleTimeout: "60m" };
+const PROFILE = { ...CLASSLESS_PROFILE, class: "standard" };
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 afterEach(() => vi.unstubAllEnvs());
 
@@ -274,36 +270,44 @@ describe("Crabbox worker provider", () => {
     ]);
   });
 
-  it("bounds and filters malformed catalogs before gateway normalization", async () => {
-    const invalidClass = "x".repeat(129);
-    const classes = [
-      { class: invalidClass, vcpu: 1, memoryGb: 2 },
-      ...Array.from({ length: 40 }, (_, index) => ({
-        class: `class-${String(index).padStart(2, "0")}`,
-        vcpu: index === 0 ? 0 : index + 1,
-        memoryGb: index === 0 ? 1.5 : (index + 1) * 2,
-      })),
-    ];
-    const provider = providerWithRunner(async () =>
-      commandResult({ stdout: JSON.stringify([{ provider: "aws", classes }]) }),
-    );
+  it.each(["class-00", "custom", undefined])(
+    "bounds and filters catalogs with configured class %s",
+    async (configuredClass) => {
+      const invalidClass = "x".repeat(129);
+      const classes = [
+        { class: invalidClass, vcpu: 1, memoryGb: 2 },
+        ...Array.from({ length: 40 }, (_, index) => ({
+          class: `class-${String(index).padStart(2, "0")}`,
+          vcpu: index === 0 ? 0 : index + 1,
+          memoryGb: index === 0 ? 1.5 : (index + 1) * 2,
+        })),
+      ];
+      const provider = providerWithRunner(async () =>
+        commandResult({ stdout: JSON.stringify([{ provider: "aws", classes }]) }),
+      );
 
-    const options = await provider.listMachineOptions?.({ ...PROFILE, class: "class-00" });
+      const options = await provider.listMachineOptions?.({
+        ...CLASSLESS_PROFILE,
+        ...(configuredClass ? { class: configuredClass } : {}),
+      });
 
-    expect(options).toHaveLength(32);
-    expect(options?.[0]).toEqual({ id: "class-00", label: "Class-00", default: true });
-    expect(options?.at(-1)).toEqual({
-      id: "class-31",
-      label: "Class-31",
-      cpu: 32,
-      memoryGb: 64,
-    });
-    expect(options?.some((option) => option.id === invalidClass)).toBe(false);
-    const customOptions = await provider.listMachineOptions?.({ ...PROFILE, class: "custom" });
-    expect(customOptions).toHaveLength(32);
-    expect(customOptions?.at(-2)?.id).toBe("class-30");
-    expect(customOptions?.at(-1)).toEqual({ id: "custom", label: "custom", default: true });
-  });
+      expect(options).toHaveLength(32);
+      expect(options?.[0]).toEqual({
+        id: "class-00",
+        label: "Class-00",
+        ...(configuredClass === "class-00" ? { default: true } : {}),
+      });
+      expect(options?.at(-1)).toEqual(
+        configuredClass === "custom"
+          ? { id: "custom", label: "custom", default: true }
+          : { id: "class-31", label: "Class-31", cpu: 32, memoryGb: 64 },
+      );
+      expect(options?.some((option) => option.id === invalidClass)).toBe(false);
+      expect(options?.filter((option) => option.default).map((option) => option.id)).toEqual(
+        configuredClass ? [configuredClass] : [],
+      );
+    },
+  );
 
   it("keeps machine-shape catalogs separate per resolved binary", async () => {
     const calls: { binary: string; argv: string[] }[] = [];
@@ -2340,32 +2344,41 @@ describe("Crabbox worker provider", () => {
     }
   });
 
-  it("overrides the configured class for one provision operation", async () => {
-    const calls: string[][] = [];
-    const provider = providerWithRunner(async (argv) => {
-      calls.push(argv);
-      return argv[1] === "warmup"
-        ? commandResult()
-        : commandResult({ stdout: inspectJson({ sshHostKey: HOST_KEY }) });
-    });
+  it.each(["standard", undefined])(
+    "overrides configured class %s for one provision operation",
+    async (configuredClass) => {
+      const calls: string[][] = [];
+      const provider = providerWithRunner(async (argv) => {
+        calls.push(argv);
+        return argv[1] === "warmup"
+          ? commandResult()
+          : commandResult({ stdout: inspectJson({ sshHostKey: HOST_KEY }) });
+      });
 
-    await provider.provision(PROFILE, OPERATION_ID, { machineClass: "c7a.24xlarge" });
+      await provider.provision(
+        { ...CLASSLESS_PROFILE, ...(configuredClass ? { class: configuredClass } : {}) },
+        OPERATION_ID,
+        {
+          machineClass: "c7a.24xlarge",
+        },
+      );
 
-    const warmup = calls.find((argv) => argv[1] === "warmup");
-    expect(warmup?.slice(warmup.indexOf("--class"), warmup.indexOf("--class") + 2)).toEqual([
-      "--class",
-      "c7a.24xlarge",
-    ]);
-  });
+      const warmup = calls.find((argv) => argv[1] === "warmup");
+      expect(warmup?.slice(warmup.indexOf("--class"), warmup.indexOf("--class") + 2)).toEqual([
+        "--class",
+        "c7a.24xlarge",
+      ]);
+    },
+  );
 
-  it.each([" ", "x".repeat(129)])(
-    "rejects an invalid per-operation machine class before allocation",
+  it.each([null, 4, "", " ", "x".repeat(129)])(
+    "rejects an invalid per-operation machine class before allocation (%j)",
     async (machineClass) => {
       const runCommand = vi.fn(async () => commandResult());
       const provider = providerWithRunner(runCommand);
 
       await expect(
-        provider.provision(PROFILE, OPERATION_ID, { machineClass }),
+        provider.provision(PROFILE, OPERATION_ID, { machineClass: machineClass as never }),
       ).rejects.toMatchObject({ code: "invalid_profile" });
       expect(runCommand).not.toHaveBeenCalled();
     },
@@ -2653,7 +2666,10 @@ describe("Crabbox worker provider", () => {
   it.each([
     { profile: {}, message: "provider" },
     { profile: { ...PROFILE, provider: " " }, message: "provider" },
-    { profile: { ...PROFILE, class: 4 }, message: "class" },
+    ...[null, "", " ", 4].map((machineClass) => ({
+      profile: { ...PROFILE, class: machineClass },
+      message: "class",
+    })),
     { profile: { ...PROFILE, ttl: "" }, message: "ttl" },
     { profile: { ...PROFILE, ttl: "garbage" }, message: "positive Go duration" },
     { profile: { ...PROFILE, ttl: "0.1ns" }, message: "positive Go duration" },
@@ -2697,7 +2713,9 @@ describe("Crabbox worker provider", () => {
     });
 
     await expect(provider.provision(profile, "provision:invalid")).rejects.toThrow(message);
-    await expect(provider.provision(profile, "provision:invalid")).rejects.toMatchObject({
+    await expect(
+      provider.provision(profile, "provision:invalid", { machineClass: "fast" }),
+    ).rejects.toMatchObject({
       code: "invalid_profile",
     });
     expect(invoked).toBe(false);
