@@ -42,7 +42,11 @@ import {
 import { createPendingToolCallState } from "./session-tool-result-state.js";
 import { makeMissingToolResult, sanitizeToolCallInputs } from "./session-transcript-repair.js";
 import type { SessionManager } from "./sessions/index.js";
-import { extractToolCallsFromAssistant, extractToolResultId } from "./tool-call-id.js";
+import {
+  extractToolCallsFromAssistant,
+  extractToolResultId,
+  rewriteToolResultIds,
+} from "./tool-call-id.js";
 
 /**
  * Truncate oversized text content blocks in a tool result message.
@@ -585,6 +589,14 @@ function isTranscriptOnlyOpenClawAssistantMessage(message: AgentMessage): boolea
   return isTranscriptOnlyOpenClawAssistantModel(provider, model);
 }
 
+function extractPendingAssistantToolCalls(message: AgentMessage) {
+  return message.role === "assistant" &&
+    message.stopReason !== "aborted" &&
+    message.stopReason !== "error"
+    ? extractToolCallsFromAssistant(message)
+    : [];
+}
+
 export function installSessionToolResultGuard(
   sessionManager: SessionManager,
   opts?: {
@@ -762,12 +774,18 @@ export function installSessionToolResultGuard(
         });
         const flushed = applyBeforeWriteHook(transformed);
         if (flushed) {
+          // Payload hooks still run, but this repair already owns a persisted call ID.
+          const canonical =
+            flushed.message.role === "toolResult"
+              ? rewriteToolResultIds({ message: flushed.message, resolveId: () => id })
+              : flushed.message;
           appendMessageAndCacheTranscriptSeq(
-            capToolResultForPersistence(flushed.message, maxToolResultChars, redactionConfig),
+            capToolResultForPersistence(canonical, maxToolResultChars, redactionConfig),
             {
               invalidateSerializedPrefixCache:
                 persistedSynthetic !== synthetic ||
                 toolResultTransformerMayMutate ||
+                canonical !== flushed.message ||
                 flushed.changed,
             },
           );
@@ -805,15 +823,15 @@ export function installSessionToolResultGuard(
 
     if (nextRole === "toolResult") {
       const id = extractToolResultId(nextMessage as Extract<AgentMessage, { role: "toolResult" }>);
-      const toolName = id ? pendingState.getToolName(id) : undefined;
-      const normalizedToolResult = normalizePersistedToolResultName(
-        nextMessage,
-        toolName,
-        id ?? undefined,
-      );
+      const toolName =
+        (id ? pendingState.getToolName(id) : undefined) ??
+        normalizeOptionalString((nextMessage as { toolName?: unknown }).toolName);
+      const preparedToolResult = toolName
+        ? normalizePersistedToolResultName(nextMessage, toolName, id ?? undefined)
+        : nextMessage;
       // Apply hard size cap before persistence to prevent oversized tool results
       // from consuming the entire context window on subsequent LLM calls.
-      const persistedToolResult = persistMessage(normalizedToolResult);
+      const persistedToolResult = persistMessage(preparedToolResult);
       const capped = capToolResultForPersistence(
         persistedToolResult,
         maxToolResultChars,
@@ -829,15 +847,24 @@ export function installSessionToolResultGuard(
         return undefined;
       }
       // A blocked result must remain pending so the next message can repair its tool-call pair.
-      if (id) {
-        pendingState.delete(id);
+      const persistedId =
+        persisted.message.role === "toolResult" ? extractToolResultId(persisted.message) : null;
+      const normalizedToolResult = normalizePersistedToolResultName(
+        persisted.message,
+        persistedId ? pendingState.getToolName(persistedId) : toolName,
+        persistedId ?? undefined,
+      );
+      if (persistedId) {
+        pendingState.delete(persistedId);
       }
       return appendMessageAndCacheTranscriptSeq(
-        capToolResultForPersistence(persisted.message, maxToolResultChars, redactionConfig),
+        capToolResultForPersistence(normalizedToolResult, maxToolResultChars, redactionConfig),
         {
           invalidateSerializedPrefixCache:
             callerInvalidatesCache ||
-            persistedToolResult !== normalizedToolResult ||
+            preparedToolResult !== nextMessage ||
+            persistedToolResult !== preparedToolResult ||
+            normalizedToolResult !== persisted.message ||
             toolResultTransformerMayMutate ||
             persisted.changed,
         },
@@ -850,11 +877,7 @@ export function installSessionToolResultGuard(
     // for incomplete tool calls causes API 400 errors:
     // "unexpected tool_use_id found in tool_result blocks"
     // This matches the behavior in repairToolUseResultPairing (session-transcript-repair.ts)
-    const stopReason = (nextMessage as { stopReason?: string }).stopReason;
-    const toolCalls =
-      nextRole === "assistant" && stopReason !== "aborted" && stopReason !== "error"
-        ? extractToolCallsFromAssistant(nextMessage as Extract<AgentMessage, { role: "assistant" }>)
-        : [];
+    const toolCalls = extractPendingAssistantToolCalls(nextMessage);
 
     // Always clear pending tool call state before appending non-tool-result messages.
     // flushPendingToolResults() only inserts synthetic results when allowSyntheticToolResults
@@ -933,9 +956,9 @@ export function installSessionToolResultGuard(
       });
     }
 
-    if (toolCalls.length > 0) {
-      pendingState.trackToolCalls(toolCalls);
-    }
+    // Execution uses the persisted assistant after hooks/redaction. Track that same
+    // identity or a successful result can leave an older ID pending and emit a false error.
+    pendingState.trackToolCalls(extractPendingAssistantToolCalls(persistedMessage));
     if (isUserAgentMessage(finalMessage)) {
       void opts?.onUserMessagePersisted?.(finalMessage, {
         ...(anchor ? { anchor } : {}),
