@@ -20,7 +20,6 @@ const DASHBOARD_REQUEST_PARAMS = {
   configuredAgentsOnly: true,
   includeGlobal: true,
   includeUnknown: true,
-  limit: 50,
 } as const;
 
 function sessionsResult(key: string, label: string, updatedAt: number) {
@@ -120,7 +119,6 @@ suite.define(() => {
         const appContext = app.runtime?.context;
         return (
           appContext?.sessions.listSnapshot({
-            limit: 50,
             boardFace: "dashboard",
             archivedFilter: "all",
             agentId: appContext.agentSelection.state.scopeId ?? undefined,
