@@ -300,6 +300,13 @@ imported and archived out of the active sessions directory after successful
 import; archive-tier JSONL files remain support artifacts, not runtime
 fallbacks.
 
+The import stages transcript payloads in a private, temporary SQLite database
+instead of retaining complete batches of histories in memory. Keep free space
+on the system temporary volume as well as the volume holding OpenClaw state.
+Staging is removed when the operation finishes and is never used as a runtime
+store or resumed after an interruption; retries use the original sources and
+committed session data. Individual transcript records are still parsed in memory.
+
 The regular `openclaw doctor` pass also reports canonical SQLite transcripts
 whose initial session header was never persisted. `openclaw doctor --fix`
 prepends a current header and rebuilds the transcript indexes in one

@@ -84,7 +84,7 @@ export function createTranscriptEventReader(
   sessionId: string,
   allowMalformedPrefix = false,
   sourceFingerprint = readTranscriptFingerprint(transcriptPath),
-): (append: (event: TranscriptEvent) => void) => void {
+): (append: (event: TranscriptEvent) => void) => () => void {
   return (append) => {
     for (const event of readTranscriptEventsForImport(
       transcriptPath,
@@ -94,6 +94,7 @@ export function createTranscriptEventReader(
     )) {
       append(event as TranscriptEvent);
     }
+    return () => assertTranscriptFileUnchanged(transcriptPath, sourceFingerprint);
   };
 }
 
@@ -511,7 +512,7 @@ function* iterateJsonlLinesSync(filePath: string): Generator<{ lineNumber: numbe
   const fd = fs.openSync(filePath, "r");
   const decoder = new TextDecoder("utf-8", { fatal: true });
   const buffer = Buffer.allocUnsafe(JSONL_READ_CHUNK_BYTES);
-  let carry = "";
+  let fragments: string[] = [];
   let lineNumber = 0;
   try {
     while (true) {
@@ -519,19 +520,20 @@ function* iterateJsonlLinesSync(filePath: string): Generator<{ lineNumber: numbe
       if (bytesRead === 0) {
         break;
       }
-      carry += decoder.decode(buffer.subarray(0, bytesRead), { stream: true });
-      const parts = carry.split(/\r?\n/);
-      carry = parts.pop() ?? "";
-      for (const part of parts) {
+      const parts = decoder.decode(buffer.subarray(0, bytesRead), { stream: true }).split("\n");
+      for (let index = 0; index < parts.length - 1; index++) {
+        fragments.push(parts[index]!);
         lineNumber += 1;
-        const text = part.trim();
+        const text = fragments.join("").trim();
+        fragments = [];
         if (text) {
           yield { lineNumber, text };
         }
       }
+      fragments.push(parts.at(-1)!);
     }
-    carry += decoder.decode();
-    const text = carry.trim();
+    fragments.push(decoder.decode());
+    const text = fragments.join("").trim();
     if (text) {
       yield { lineNumber: lineNumber + 1, text };
     }
