@@ -545,6 +545,8 @@ if [ "$UPDATE_RESTART_MODE" = "auto-auth" ]; then
   # shellcheck disable=SC1091
   source scripts/e2e/lib/upgrade-survivor/update-restart-auth.sh
   prepare_update_restart_probe_current_install "$PORT" "$GATEWAY_LOG"
+  pre_update_service_pid="$(cat "$SYSTEMCTL_SHIM_PID_FILE")"
+  pre_update_systemctl_lines="$(wc -l <"$SYSTEMCTL_SHIM_LOG")"
 fi
 
 echo "Running package update against the mounted tarball..."
@@ -589,6 +591,7 @@ node scripts/e2e/lib/upgrade-survivor/assertions.mjs assert-state
 
 startup_summary="n/a"
 if [ "$UPDATE_RESTART_MODE" = "auto-auth" ]; then
+  assert_update_restart_service_replaced "$pre_update_service_pid" "$pre_update_systemctl_lines"
   echo "Gateway restart was handled by openclaw update."
 else
   echo "Starting gateway from upgraded state..."
