@@ -2,6 +2,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { buildServiceEnvironment } from "../../daemon/service-env.js";
 import { makeTempWorkspace } from "../../test-helpers/workspace.js";
 import { captureEnv } from "../../test-utils/env.js";
 import { createCliRuntimeCapture } from "../test-runtime-capture.js";
@@ -58,7 +59,8 @@ vi.mock("../../runtime.js", () => ({
 }));
 
 const { runDaemonInstall } = await import("./install.js");
-const { clearConfigCache, clearRuntimeConfigSnapshot } = await import("../../config/config.js");
+const { clearConfigCache, clearRuntimeConfigSnapshot, readConfigFileSnapshot } =
+  await import("../../config/config.js");
 const { readSystemdDefinitionMutationCapability } =
   await import("../../daemon/systemd-definition-mutation.js");
 const { readSystemdServiceExecStart } = await import("../../daemon/systemd-service-files.js");
@@ -66,6 +68,26 @@ const { assertServiceDefinitionWritable } = await import("../../daemon/service-t
 
 async function readJson(filePath: string): Promise<Record<string, unknown>> {
   return JSON.parse(await fs.readFile(filePath, "utf8")) as Record<string, unknown>;
+}
+
+async function createInstalledServiceCommand() {
+  // An installed service has already observed its config; include that health store in snapshots.
+  await readConfigFileSnapshot();
+  const programArguments = ["openclaw", "gateway", "run"];
+  const environment = buildServiceEnvironment({
+    env: process.env,
+    port: 18789,
+    execPath: programArguments[0],
+  });
+  return {
+    programArguments,
+    // Service readers return only persisted strings, including the host's required TLS CA bundle.
+    environment: Object.fromEntries(
+      Object.entries(environment).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string",
+      ),
+    ),
+  };
 }
 
 describe("runDaemonInstall integration", () => {
@@ -433,10 +455,7 @@ describe("runDaemonInstall integration", () => {
     );
     clearConfigCache();
     serviceMock.isLoaded.mockResolvedValue(true);
-    serviceMock.readCommand.mockResolvedValue({
-      programArguments: ["openclaw", "gateway", "run"],
-      environment: {},
-    } as never);
+    serviceMock.readCommand.mockResolvedValue(await createInstalledServiceCommand());
     const originalBytes = await fs.readFile(configPath);
     const originalEntries = (await fs.readdir(tempHome)).toSorted();
 
@@ -458,10 +477,7 @@ describe("runDaemonInstall integration", () => {
       kind: "sealed",
       detail: "unit definition is owned by root",
     } as never);
-    serviceMock.readCommand.mockResolvedValue({
-      programArguments: ["openclaw", "gateway", "run"],
-      environment: {},
-    } as never);
+    serviceMock.readCommand.mockResolvedValue(await createInstalledServiceCommand());
 
     await runDaemonInstall({ json: true });
 

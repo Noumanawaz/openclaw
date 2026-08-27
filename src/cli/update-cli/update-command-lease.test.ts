@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import { readConfigFileSnapshot } from "../../config/config.js";
@@ -79,7 +78,7 @@ beforeEach(async () => {
     "entry.mjs",
     `
     import { tsImport } from ${JSON.stringify(import.meta.resolve("tsx/esm/api"))};
-    const { runUpdateLeaseChild } = await tsImport(${JSON.stringify(pathToFileURL(path.resolve("src/cli/update-cli/update-command-lease.test-support.ts")).href)}, { parentURL: import.meta.url, tsconfig: ${JSON.stringify(path.resolve("tsconfig.json"))} });
+    const { runUpdateLeaseChild } = await tsImport(${JSON.stringify(new URL("./update-command-lease.test-support.ts", import.meta.url).href)}, { parentURL: import.meta.url, tsconfig: ${JSON.stringify(path.resolve("tsconfig.json"))} });
     await runUpdateLeaseChild();
   `,
   );
