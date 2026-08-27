@@ -185,6 +185,59 @@ describe("resolveSessionKeyFromResolveParams", () => {
     }
   });
 
+  const expectSpawnedByDenied = async () => {
+    await expect(
+      resolveSessionKeyFromResolveParams({
+        cfg: {},
+        p: { key: canonicalKey, spawnedBy: "controller-1", allowMissing: true },
+      }),
+    ).resolves.toEqual({ ok: true, missing: true });
+  };
+
+  it("denies a retained terminal run controller without stored lineage", async () => {
+    // A former controller's terminal record is history, not current authority.
+    targetStore = {
+      [canonicalKey]: { sessionId: "sess-ended-child", updatedAt: Date.now() },
+    };
+    subagentRuns.set(
+      "run-ended",
+      createSubagentRunRecord({
+        runId: "run-ended",
+        childSessionKey: canonicalKey,
+        requesterSessionKey: "controller-1",
+        requesterDisplayKey: "controller-1",
+        startedAt: Date.now() - 10 * 60_000,
+        endedAt: Date.now() - 5 * 60_000,
+      }),
+    );
+    try {
+      await expectSpawnedByDenied();
+    } finally {
+      subagentRuns.delete("run-ended");
+    }
+  });
+
+  it("denies a stale unended run controller without stored lineage", async () => {
+    targetStore = {
+      [canonicalKey]: { sessionId: "sess-stale-child", updatedAt: Date.now() },
+    };
+    subagentRuns.set(
+      "run-stale",
+      createSubagentRunRecord({
+        runId: "run-stale",
+        childSessionKey: canonicalKey,
+        requesterSessionKey: "controller-1",
+        requesterDisplayKey: "controller-1",
+        startedAt: Date.now() - 3 * 60 * 60 * 1_000,
+      }),
+    );
+    try {
+      await expectSpawnedByDenied();
+    } finally {
+      subagentRuns.delete("run-stale");
+    }
+  });
+
   it("rejects legacy keys with doctor repair guidance", async () => {
     hoisted.resolveGatewaySessionStoreTargetWithStoreMock.mockImplementationOnce(() => {
       throw Object.assign(new Error("stop the Gateway and run openclaw doctor --fix"), {

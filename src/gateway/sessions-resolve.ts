@@ -16,6 +16,7 @@ import {
 } from "../../packages/session-url-contract/src/index.js";
 import { listAgentIds } from "../agents/agent-scope.js";
 import { getSessionDisplaySubagentRunByChildSessionKey } from "../agents/subagents/registry/subagent-registry-read.js";
+import { isLiveUnendedSubagentRun } from "../agents/subagents/registry/subagent-run-liveness.js";
 import type { SessionEntry } from "../config/sessions.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { parseAgentSessionKey } from "../routing/session-key.js";
@@ -83,9 +84,10 @@ function validateSessionAgentExists(
 /**
  * Exact-key spawnedBy checks answer spawn-lineage ownership (they back
  * sessions_history/sessions_send tree authorization), not list discovery.
- * Durable parent linkage on the stored entry — or the live run controller —
- * authorizes regardless of the display liveness windows that bound child
- * listings, so a recovered or long-ended child stays reachable to its parent.
+ * Durable parent linkage on the stored entry — or the controller of a live
+ * run — authorizes regardless of the display liveness windows that bound
+ * child listings, so a recovered or long-ended child stays reachable to its
+ * parent. Retained terminal or snapshot run records confer no authority.
  */
 function isResolvedSessionKeyOwnedBySpawner(params: {
   p: SessionsResolveParams;
@@ -96,6 +98,9 @@ function isResolvedSessionKeyOwnedBySpawner(params: {
   if (!spawnedBy) {
     return true;
   }
+  // spawnedBy/parentSessionKey are immutable spawn facts and already expose
+  // the child to this parent in listings, so they stay authoritative even
+  // while another session's live run controls the child.
   if (
     isDirectChildSessionEntry({
       sessionKey: params.key,
@@ -106,9 +111,12 @@ function isResolvedSessionKeyOwnedBySpawner(params: {
     return true;
   }
   const run = getSessionDisplaySubagentRunByChildSessionKey(params.key);
+  if (!run || !isLiveUnendedSubagentRun(run)) {
+    return false;
+  }
   const controller =
-    normalizeOptionalString(run?.controllerSessionKey) ??
-    normalizeOptionalString(run?.requesterSessionKey);
+    normalizeOptionalString(run.controllerSessionKey) ??
+    normalizeOptionalString(run.requesterSessionKey);
   return controller === spawnedBy;
 }
 
