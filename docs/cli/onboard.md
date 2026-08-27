@@ -241,6 +241,21 @@ OPENCLAW_LOCALE=en openclaw onboard # Explicit English override
 
 `--non-interactive` requires `--accept-risk` (acknowledges that agents are powerful and full system access is risky). `--mode` defaults to `local`.
 
+`--accept-risk` does not approve external plugin capabilities. If your selected
+provider requires a downloadable runtime plugin, review and install it before
+running non-interactive setup. For OpenAI, review the
+[Codex plugin](/plugins/codex-harness), then explicitly accept its capabilities:
+
+```bash
+openclaw plugins install npm:@openclaw/codex --accept-capabilities
+```
+
+Interactive onboarding prompts for this review. Non-interactive setup stops
+when a new or newly enabled plugin needs consent; `--accept-risk` cannot
+substitute for it. Already-enabled legacy plugins remain usable without a
+retroactive review. See
+[Capability consent](/plugins/manage-plugins#capability-consent).
+
 ```bash
 openclaw onboard --non-interactive --accept-risk --skip-health \
   --agent-name robby \
@@ -295,7 +310,7 @@ With `--secret-input-mode ref`, onboarding stores new credentials as refs instea
 - With `--secret-input-mode ref`, non-interactive `--gateway-password` and `--remote-password` require a matching `OPENCLAW_GATEWAY_PASSWORD`, and `--remote-token` requires a matching `OPENCLAW_GATEWAY_TOKEN`; onboarding stores an env SecretRef and rejects missing or mismatched values before changing state. Interactive setup can also select configured file, exec, or store refs.
 - With `--install-daemon`: a SecretRef-managed `gateway.auth.token` is validated but not persisted as resolved plaintext in supervisor service environment metadata; if the ref is unresolved, install fails closed with remediation guidance. If both `gateway.auth.token` and `gateway.auth.password` are configured and `gateway.auth.mode` is unset, install blocks until mode is set explicitly.
 - Local onboarding writes `gateway.mode="local"` into the config. A later config file missing `gateway.mode` indicates config damage or an incomplete manual edit, not a valid local-mode shortcut.
-- Local onboarding installs downloadable plugins the chosen setup path requires (for example a Codex or Copilot runtime plugin for those auth choices). Remote onboarding only writes connection info for the remote Gateway - it never installs local plugin packages.
+- Interactive local onboarding offers to install downloadable plugins the chosen setup path requires (for example a Codex or Copilot runtime plugin for those auth choices). For non-interactive local onboarding, preinstall and accept capabilities for any new or newly enabled external runtime plugin; already-enabled legacy installations remain usable. Remote onboarding only writes connection info for the remote Gateway - it never installs local plugin packages.
 - `--allow-unconfigured` is a separate `openclaw gateway run` escape hatch; it does not let onboarding skip `gateway.mode`.
 
 ```bash

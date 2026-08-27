@@ -9,6 +9,19 @@ sidebarTitle: "CLI automation"
 
 Use `openclaw onboard --non-interactive` to script setup. It requires `--accept-risk`: non-interactive setup can write credentials and daemon config without a confirmation prompt, so the flag is the explicit risk acknowledgement.
 
+This flag does not approve external plugin capabilities. Before automating a
+provider that requires a downloadable runtime plugin, review and install that
+plugin with explicit capability acceptance. For OpenAI, review the
+[Codex plugin](/plugins/codex-harness), then run:
+
+```bash
+openclaw plugins install npm:@openclaw/codex --accept-capabilities
+```
+
+Without that prerequisite, setup stops before activating the runtime. Existing
+enabled plugins remain usable; a plugin update that adds capabilities needs a
+new review. See [Capability consent](/plugins/manage-plugins#capability-consent).
+
 Each command can install a managed Gateway with `--install-daemon`, require an already-running compatible Gateway by omitting daemon flags, explicitly leave the Gateway stopped with `--skip-daemon`, or use `--skip-health` for config-only setup. The explicit skip still probes for an existing Gateway and reports whether one is reachable, but an absent listener is informational rather than a setup failure.
 
 <Note>
