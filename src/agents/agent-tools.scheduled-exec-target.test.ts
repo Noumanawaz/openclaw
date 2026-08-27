@@ -48,11 +48,13 @@ describe("createOpenClawCodingTools scheduled exec target", () => {
       },
     });
     const execTool = tools.find((tool) => tool.name === "exec");
-    expect(execTool).toBeDefined();
+    if (!execTool) {
+      throw new Error("expected an exec tool on the scheduled surface");
+    }
 
     // The pinned schema stops advertising host/security/ask/node entirely.
     const properties = Object.keys(
-      (execTool?.parameters as { properties?: Record<string, unknown> }).properties ?? {},
+      (execTool.parameters as { properties?: Record<string, unknown> }).properties ?? {},
     );
     expect(properties).toContain("command");
     expect(properties).not.toContain("host");
@@ -60,7 +62,7 @@ describe("createOpenClawCodingTools scheduled exec target", () => {
     expect(properties).not.toContain("ask");
     expect(properties).not.toContain("node");
 
-    await execTool?.execute?.("call-1", {
+    await execTool.execute("call-1", {
       command: "echo hi",
       host: "node",
       node: "remote",

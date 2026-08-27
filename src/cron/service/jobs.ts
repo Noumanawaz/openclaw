@@ -32,12 +32,7 @@ import {
   normalizeStreamScheduleBounds,
   resolveEveryAnchorMs,
 } from "./jobs-scheduling.js";
-import {
-  reconcileScheduledToolPolicy,
-  reconcileToolsAllowExecTarget,
-  reconcileToolsAllowProvenance,
-  stampScheduledToolPolicy,
-} from "./jobs-tool-policy.js";
+import { reconcileToolsAllowAuthority } from "./jobs-tool-policy.js";
 import {
   assertAnnounceDeliveryChannelSupport,
   assertTimeScheduleSatisfiable,
@@ -278,15 +273,12 @@ export function createJob(
   // New trusted jobs are explicit by construction. Agent-runtime callers are
   // required to arrive with a creator cap before the service can apply this default.
   applyDefaultCronToolsAllow(job);
-  stampScheduledToolPolicy(job, opts?.scheduledToolPolicy);
-  reconcileToolsAllowProvenance({
+  reconcileToolsAllowAuthority({
     job,
+    previouslyUsedToolRuntime: false,
     explicitlyMutatesToolsAllow: true,
+    scheduledToolPolicy: opts?.scheduledToolPolicy,
     toolsAllowProvenance: opts?.toolsAllowProvenance,
-  });
-  reconcileToolsAllowExecTarget({
-    job,
-    explicitlyMutatesToolsAllow: true,
     toolsAllowExecTarget: opts?.toolsAllowExecTarget,
   });
   validateFullJob(
@@ -386,23 +378,13 @@ export function applyJobPatch(
     // Ordinary edits to an existing capless job intentionally remain legacy.
     applyDefaultCronToolsAllow(job);
   }
-  reconcileScheduledToolPolicy({
+  reconcileToolsAllowAuthority({
     job,
     previouslyUsedToolRuntime,
     explicitlyMutatesToolsAllow:
       patch.payload !== undefined && Object.hasOwn(patch.payload, "toolsAllow"),
     scheduledToolPolicy: opts?.scheduledToolPolicy,
-  });
-  reconcileToolsAllowProvenance({
-    job,
-    explicitlyMutatesToolsAllow:
-      patch.payload !== undefined && Object.hasOwn(patch.payload, "toolsAllow"),
     toolsAllowProvenance: opts?.toolsAllowProvenance,
-  });
-  reconcileToolsAllowExecTarget({
-    job,
-    explicitlyMutatesToolsAllow:
-      patch.payload !== undefined && Object.hasOwn(patch.payload, "toolsAllow"),
     toolsAllowExecTarget: opts?.toolsAllowExecTarget,
   });
   if (patch.delivery) {
@@ -542,20 +524,12 @@ export function applyDeclarativeJobSpec(
       applyDefaultCronToolsAllow(job);
     }
   }
-  reconcileScheduledToolPolicy({
+  reconcileToolsAllowAuthority({
     job,
     previouslyUsedToolRuntime,
     explicitlyMutatesToolsAllow: explicitlyDeclaresToolsAllow,
     scheduledToolPolicy: opts.scheduledToolPolicy,
-  });
-  reconcileToolsAllowProvenance({
-    job,
-    explicitlyMutatesToolsAllow: explicitlyDeclaresToolsAllow,
     toolsAllowProvenance: opts.toolsAllowProvenance,
-  });
-  reconcileToolsAllowExecTarget({
-    job,
-    explicitlyMutatesToolsAllow: explicitlyDeclaresToolsAllow,
     toolsAllowExecTarget: opts.toolsAllowExecTarget,
   });
   const delivery = resolveInitialCronDelivery(input);
