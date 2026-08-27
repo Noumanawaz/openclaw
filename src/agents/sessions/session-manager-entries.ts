@@ -66,6 +66,9 @@ export class SessionManagerEntries extends SessionManagerPersistence {
         this.pendingDeliberateAppend = false;
         return persistenceResult.anchor;
       }
+      if (canonicalEntry.type === "message" && persistenceResult.message !== undefined) {
+        canonicalEntry.message = persistenceResult.message;
+      }
     }
     const effectiveParentId =
       persistenceResult && typeof persistenceResult === "object"

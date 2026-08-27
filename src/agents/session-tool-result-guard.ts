@@ -704,17 +704,31 @@ export function installSessionToolResultGuard(
       runOwnedMessage as never,
       options,
     );
-    if (sessionManager.getAppendParentId() === appendParentEntryId) {
-      return { entryId, message: runOwnedMessage, ...(anchor ? { anchor } : {}) };
+    const entry = sessionManager.getEntry(entryId);
+    if (entry?.type !== "message") {
+      throw new Error(`Appended transcript message is unavailable: ${entryId}`);
     }
-    void opts?.onMessagePersisted?.(runOwnedMessage);
+    const persistedMessage = entry.message;
+    const persistedId =
+      persistedMessage.role === "toolResult" ? extractToolResultId(persistedMessage) : null;
+    // Retire only committed results, before callbacks can re-enter or throw.
+    if (persistedId) {
+      pendingState.delete(persistedId);
+    }
+    // Callbacks may append results immediately; execute and track the same
+    // committed assistant identity after storage hooks and redaction.
+    pendingState.trackToolCalls(extractPendingAssistantToolCalls(persistedMessage));
+    if (sessionManager.getAppendParentId() === appendParentEntryId) {
+      return { entryId, message: persistedMessage, ...(anchor ? { anchor } : {}) };
+    }
+    void opts?.onMessagePersisted?.(persistedMessage);
     const sessionTarget = sessionManager.getSessionTarget();
     if (!sessionTarget) {
-      return { entryId, message: runOwnedMessage, ...(anchor ? { anchor } : {}) };
+      return { entryId, message: persistedMessage, ...(anchor ? { anchor } : {}) };
     }
     return {
       entryId,
-      message: runOwnedMessage,
+      message: persistedMessage,
       ...(anchor ? { anchor } : {}),
       sessionTarget,
       messageSeq: resolveAppendedMessageSeq({
@@ -846,18 +860,21 @@ export function installSessionToolResultGuard(
       if (!persisted) {
         return undefined;
       }
+      // An executed call already carries its persisted identity. Redact payloads,
+      // but do not transform that known pairing key a second time.
+      const canonicalMessage =
+        id && pendingState.has(id) && persisted.message.role === "toolResult"
+          ? rewriteToolResultIds({ message: persisted.message, resolveId: () => id })
+          : persisted.message;
       // A blocked result must remain pending so the next message can repair its tool-call pair.
       const persistedId =
-        persisted.message.role === "toolResult" ? extractToolResultId(persisted.message) : null;
+        canonicalMessage.role === "toolResult" ? extractToolResultId(canonicalMessage) : null;
       const normalizedToolResult = normalizePersistedToolResultName(
-        persisted.message,
+        canonicalMessage,
         persistedId ? pendingState.getToolName(persistedId) : toolName,
         persistedId ?? undefined,
       );
-      if (persistedId) {
-        pendingState.delete(persistedId);
-      }
-      return appendMessageAndCacheTranscriptSeq(
+      const appended = appendMessageAndCacheTranscriptSeq(
         capToolResultForPersistence(normalizedToolResult, maxToolResultChars, redactionConfig),
         {
           invalidateSerializedPrefixCache:
@@ -868,7 +885,8 @@ export function installSessionToolResultGuard(
             toolResultTransformerMayMutate ||
             persisted.changed,
         },
-      ).entryId;
+      );
+      return appended.entryId;
     }
 
     // Skip tool call extraction for aborted/errored assistant messages.
@@ -956,9 +974,6 @@ export function installSessionToolResultGuard(
       });
     }
 
-    // Execution uses the persisted assistant after hooks/redaction. Track that same
-    // identity or a successful result can leave an older ID pending and emit a false error.
-    pendingState.trackToolCalls(extractPendingAssistantToolCalls(persistedMessage));
     if (isUserAgentMessage(finalMessage)) {
       void opts?.onUserMessagePersisted?.(finalMessage, {
         ...(anchor ? { anchor } : {}),

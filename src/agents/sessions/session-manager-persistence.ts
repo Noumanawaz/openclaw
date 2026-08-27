@@ -7,7 +7,11 @@ import {
 } from "../../config/sessions/session-accessor.js";
 import { isIndexedSessionEntry, parseOpaqueLeafEntry } from "./session-manager-codec.js";
 import { SessionManagerCore } from "./session-manager-core.js";
-import type { AppendPersistenceOptions, SessionEntry } from "./session-manager-types.js";
+import type {
+  AppendPersistenceOptions,
+  SessionEntry,
+  SessionMessageEntry,
+} from "./session-manager-types.js";
 
 type PersistRecordResult =
   | string
@@ -17,6 +21,7 @@ type PersistRecordResult =
       anchor?: TranscriptEntryAnchor;
       adoptedMessageId?: string;
       effectiveParentId: string | null;
+      message?: SessionMessageEntry["message"];
     };
 
 function requireTranscriptEventAppend(
@@ -252,6 +257,7 @@ export class SessionManagerPersistence extends SessionManagerCore {
     return {
       ...(result.anchor ? { anchor: result.anchor } : {}),
       effectiveParentId: result.effectiveParentId,
+      message: result.message,
     };
   }
 }

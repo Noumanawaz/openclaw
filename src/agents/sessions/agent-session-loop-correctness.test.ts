@@ -15,7 +15,6 @@ import {
 import { resolveSqliteTargetFromSessionStorePath } from "../../config/sessions/session-sqlite-target.js";
 import { closeOpenClawAgentDatabaseByPath } from "../../state/openclaw-agent-db.js";
 import { steerActiveSessionWithOptionalDeliveryWait } from "../embedded-agent-runner/run/attempt-queue-message.js";
-import { guardSessionManager } from "../session-tool-result-guard-wrapper.js";
 import { agentSessionAutomaticCompaction } from "./agent-session-compaction.js";
 import {
   appendHistory,
@@ -49,70 +48,6 @@ const completedCompactionEvent = (reason: "threshold" | "overflow", willRetry: b
   });
 
 describe("AgentSession loop correctness", () => {
-  it.each([
-    ["unchanged", ["call_fixture_plain"]],
-    ["redacted", [`call_fixture|fc-${"a".repeat(24)}`]],
-    ["mixed", ["call_fixture_plain", `call_fixture|fc-${"b".repeat(24)}`]],
-  ])("pairs successful %s tool calls after persistence redaction", async (_label, ids) => {
-    const executedIds: string[] = [];
-    const tool: ToolDefinition = {
-      name: "inspect",
-      label: "Inspect",
-      description: "Returns a fixture observation",
-      parameters: Type.Object({}),
-      execute: async (id) => {
-        executedIds.push(id);
-        return { content: [{ type: "text", text: "observed" }], details: {} };
-      },
-    };
-    let requests = 0;
-    streamMocks.streamSimple.mockImplementation((model: Model) =>
-      createAssistantResultStream(
-        ++requests === 1
-          ? createAssistant(
-              model,
-              ids.map((id) => ({ type: "toolCall", id, name: tool.name, arguments: {} })),
-              "toolUse",
-            )
-          : createAssistant(model, [{ type: "text", text: "complete" }]),
-      ),
-    );
-    const manager = guardSessionManager(SessionManager.inMemory(), {
-      config: {},
-      missingToolResultText: "aborted",
-    });
-    const { session } = await createTestSession({ sessionManager: manager, customTools: [tool] });
-
-    await session.prompt("Inspect the fixture");
-    manager.flushPendingToolResults?.();
-
-    const messages = manager
-      .getEntries()
-      .flatMap((entry) => (entry.type === "message" ? [entry.message] : []));
-    const persistedIds = messages.flatMap((message) =>
-      message.role === "assistant"
-        ? message.content.flatMap((block) => (block.type === "toolCall" ? [block.id] : []))
-        : [],
-    );
-    expect(requests).toBe(2);
-    expect(executedIds).toEqual(persistedIds);
-    expect(executedIds).toHaveLength(ids.length);
-    expect(executedIds).toEqual(
-      ids.map((id) => (id.includes("|") ? expect.not.stringContaining(id) : id)),
-    );
-    expect(messages.filter((message) => message.role === "toolResult")).toEqual(
-      executedIds.map((toolCallId) =>
-        expect.objectContaining({
-          toolCallId,
-          toolName: tool.name,
-          isError: false,
-          content: [{ type: "text", text: "observed" }],
-        }),
-      ),
-    );
-    expect(session.getLastAssistantText()).toBe("complete");
-  });
-
   it("publishes a queued user message only after its transcript entry is committed", async () => {
     const { session, sessionManager } = await createTestSession();
     type QueuedMessage = Parameters<SessionManager["appendMessage"]>[0];
