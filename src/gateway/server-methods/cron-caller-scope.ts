@@ -24,7 +24,7 @@ export type CronCallerScope = {
   accountId: string;
   currentJobId?: string;
   toolsAllowProvenance?: CronToolsAllowProvenance;
-  /** Restrict-only exec pin carried by the signed creator-turn identity. */
+  /** Restrict-only exec policy carried by the signed creator-turn identity. */
   toolsAllowExecTarget?: CronToolsAllowExecTarget;
   cronCreatorAuthorityGrant?: CronCreatorAuthorityGrant;
 };
@@ -62,7 +62,10 @@ export function readCronCallerScope(
           },
           ...(identity.cronExecToolTarget?.host === "gateway"
             ? {
-                toolsAllowExecTarget: { version: 1 as const, host: "gateway" as const },
+                toolsAllowExecTarget: {
+                  version: 1 as const,
+                  ...identity.cronExecToolTarget,
+                },
               }
             : {}),
         }

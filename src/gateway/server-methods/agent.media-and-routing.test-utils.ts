@@ -1460,6 +1460,8 @@ describe("gateway agent handler", () => {
         basePersisted: true,
         toolsAllow: ["image_generate", "write"],
         toolsAllowIsDefault: true,
+        scheduledToolPolicy: { version: 1, mode: "trusted" },
+        toolsAllowExecTarget: { version: 1, host: "gateway", ask: "always" },
         cliSessionBindingFacts: {
           sourceReplyDeliveryMode: "automatic" as const,
           requireExplicitMessageTarget: true,
@@ -1504,6 +1506,11 @@ describe("gateway agent handler", () => {
       sessionId?: string;
       toolsAllow?: string[];
       toolsAllowIsDefault?: boolean;
+      scheduledToolPolicy?: {
+        version: 1;
+        mode: "trusted";
+        execTarget?: { host: "gateway"; ask?: "always" };
+      };
       requireExplicitMessageTarget?: boolean;
       sourceReplyDeliveryMode?: string;
       cliSessionBindingFacts?: {
@@ -1520,6 +1527,11 @@ describe("gateway agent handler", () => {
     expect(callArgs.bootstrapContextRunKind).toBe("cron");
     expect(callArgs.toolsAllow).toEqual(["image_generate", "write"]);
     expect(callArgs.toolsAllowIsDefault).toBe(true);
+    expect(callArgs.scheduledToolPolicy).toEqual({
+      version: 1,
+      mode: "trusted",
+      execTarget: { host: "gateway", ask: "always" },
+    });
     expect(callArgs.requireExplicitMessageTarget).toBe(true);
     expect(callArgs.sourceReplyDeliveryMode).toBe("automatic");
     expect(callArgs.cliSessionBindingFacts).toEqual({

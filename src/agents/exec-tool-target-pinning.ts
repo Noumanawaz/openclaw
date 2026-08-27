@@ -11,8 +11,8 @@ import type { AnyAgentTool } from "./tools/common.js";
 export type CronScheduledToolProjectionInfo = Readonly<{
   /** Canonical core tool the alias projects. */
   targetTool: "exec" | "process";
-  /** Restrict-only execution target the alias enforces. */
-  execTarget?: Readonly<{ host: "gateway" }>;
+  /** Restrict-only execution policy the alias enforces. */
+  execTarget?: Readonly<{ host: "gateway"; ask?: "always" }>;
 }>;
 
 type CronScheduledToolProjection = Readonly<{
@@ -61,7 +61,13 @@ export function createCronScheduledToolProjection(
       : { ...sourceTool, name: projection.name, description: projection.description };
   const info: CronScheduledToolProjectionInfo =
     targetTool === "exec"
-      ? Object.freeze({ targetTool, execTarget: Object.freeze({ host: "gateway" as const }) })
+      ? Object.freeze({
+          targetTool,
+          execTarget: Object.freeze({
+            host: "gateway" as const,
+            ...(projection.kind === "exec" && projection.ask ? { ask: projection.ask } : {}),
+          }),
+        })
       : Object.freeze({ targetTool });
   scheduledToolProjections.set(
     projectedTool,

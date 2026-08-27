@@ -23,12 +23,13 @@ function testTool(name: string): AnyAgentTool {
   };
 }
 
-function gatewayExecAlias(execTool: AnyAgentTool): AnyAgentTool {
+function gatewayExecAlias(execTool: AnyAgentTool, ask?: "always"): AnyAgentTool {
   return createCronScheduledToolProjection(execTool, () => {}, "exec", {
     kind: "exec",
     name: "gateway_exec",
     description: "Gateway exec alias",
     followupText: "Use gateway_process for follow-up.",
+    ...(ask ? { ask } : {}),
   });
 }
 
@@ -177,16 +178,23 @@ describe("cron tool creator cap", () => {
   });
 
   it("captures a host-created gateway alias under its canonical exec identity", () => {
-    const alias = gatewayExecAlias(testTool("exec"));
+    const alias = gatewayExecAlias(testTool("exec"), "always");
     const target: CronCreatorToolAllowlistEntry[] = [];
 
     replaceWithEffectiveCronCreatorToolAllowlist(target, [alias, testTool("read")]);
 
     expect(target).toEqual([
-      { name: "exec", aliasName: "gateway_exec", execTarget: { host: "gateway" } },
+      {
+        name: "exec",
+        aliasName: "gateway_exec",
+        execTarget: { host: "gateway", ask: "always" },
+      },
       { name: "read" },
     ]);
-    expect(resolveCronCreatorExecToolTarget(target)).toEqual({ host: "gateway" });
+    expect(resolveCronCreatorExecToolTarget(target)).toEqual({
+      host: "gateway",
+      ask: "always",
+    });
   });
 
   it("captures an unregistered same-name tool literally, never as shell authority", () => {
@@ -212,6 +220,19 @@ describe("cron tool creator cap", () => {
     expect(directFirst).toEqual([{ name: "exec", aliasName: "gateway_exec" }]);
     expect(resolveCronCreatorExecToolTarget(aliasFirst)).toBeUndefined();
     expect(resolveCronCreatorExecToolTarget(directFirst)).toBeUndefined();
+  });
+
+  it("keeps only restrictions shared by duplicate gateway aliases", () => {
+    const guarded = gatewayExecAlias(testTool("exec"), "always");
+    const unguarded = gatewayExecAlias(testTool("exec"));
+    const guardedFirst: CronCreatorToolAllowlistEntry[] = [];
+    const unguardedFirst: CronCreatorToolAllowlistEntry[] = [];
+
+    replaceWithEffectiveCronCreatorToolAllowlist(guardedFirst, [guarded, unguarded]);
+    replaceWithEffectiveCronCreatorToolAllowlist(unguardedFirst, [unguarded, guarded]);
+
+    expect(resolveCronCreatorExecToolTarget(guardedFirst)).toEqual({ host: "gateway" });
+    expect(resolveCronCreatorExecToolTarget(unguardedFirst)).toEqual({ host: "gateway" });
   });
 
   it("caps explicit alias-name requests to the canonical persisted tool id", () => {

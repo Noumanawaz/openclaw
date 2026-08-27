@@ -14,8 +14,8 @@ export type ScheduledToolPolicyContext = (
       ownerOrigin?: CronScheduledToolCallerOrigin;
     })
 ) & {
-  /** Restrict-only pin for the rebuilt exec tool; absence keeps baseline exec. */
-  execTarget?: { host: "gateway" };
+  /** Restrict-only policy for the rebuilt exec tool; absence keeps baseline exec. */
+  execTarget?: { host: "gateway"; ask?: "always" };
 };
 
 /** Separates a scheduled creator's authorization identity from its delivery route. */
@@ -78,7 +78,12 @@ export function resolveScheduledToolPolicyContext(params: {
     isRecord(rawExecTarget) &&
     rawExecTarget.host === "gateway" &&
     (rawExecTarget.version === undefined || rawExecTarget.version === 1)
-      ? { execTarget: { host: "gateway" as const } }
+      ? {
+          execTarget: {
+            host: "gateway" as const,
+            ...(rawExecTarget.ask === "always" ? { ask: "always" as const } : {}),
+          },
+        }
       : {};
   if (policy.mode === "trusted") {
     return { ...policy, ...pinned };

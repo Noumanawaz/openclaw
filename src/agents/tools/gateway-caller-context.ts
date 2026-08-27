@@ -41,8 +41,8 @@ type GatewayToolCallerIdentity = {
   /** Host-signed capability for the scheduled run's existing self-management surface. */
   cronSelfManagementJobId?: string;
   cronToolsAllowCapture?: "final-executable-surface";
-  /** Restrict-only fact: exec on the captured creator surface is host-pinned. */
-  cronExecToolTarget?: { host: "gateway" };
+  /** Restrict-only policy enforced by exec on the captured creator surface. */
+  cronExecToolTarget?: { host: "gateway"; ask?: "always" };
   /** One-shot Gateway-owned proof for a freshly resolved configured-MCP cap. */
   cronCreatorAuthorityGrant?: CronCreatorAuthorityGrant;
   // Trusted run context, carried separately from model-authored tool arguments.

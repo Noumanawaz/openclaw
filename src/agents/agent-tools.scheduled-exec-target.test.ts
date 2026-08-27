@@ -11,27 +11,31 @@ import { pinExecToolTarget } from "./exec-tool-target-pinning.js";
 import type { AnyAgentTool } from "./tools/common.js";
 
 const shellSpies = vi.hoisted(() => ({
+  defaults: vi.fn(),
   exec: vi.fn(async () => ({ content: [], details: {} })),
   process: vi.fn(async () => ({ content: [], details: {} })),
 }));
 
 vi.mock("./bash-tools.js", () => ({
-  createExecTool: () => ({
-    name: "exec",
-    description: "exec test double",
-    parameters: {
-      type: "object",
-      properties: {
-        command: { type: "string" },
-        host: { type: "string" },
-        security: { type: "string" },
-        ask: { type: "string" },
-        node: { type: "string" },
+  createExecTool: (defaults: unknown) => {
+    shellSpies.defaults(defaults);
+    return {
+      name: "exec",
+      description: "exec test double",
+      parameters: {
+        type: "object",
+        properties: {
+          command: { type: "string" },
+          host: { type: "string" },
+          security: { type: "string" },
+          ask: { type: "string" },
+          node: { type: "string" },
+        },
+        required: ["command", "host"],
       },
-      required: ["command", "host"],
-    },
-    execute: shellSpies.exec,
-  }),
+      execute: shellSpies.exec,
+    };
+  },
   createProcessTool: () => ({
     name: "process",
     description: "process test double",
@@ -46,14 +50,13 @@ describe("createOpenClawCodingTools scheduled exec target", () => {
       scheduledToolPolicy: {
         version: 1,
         mode: "trusted",
-        execTarget: { host: "gateway" },
+        execTarget: { host: "gateway", ask: "always" },
       },
     });
     const execTool = tools.find((tool) => tool.name === "exec");
     if (!execTool) {
       throw new Error("expected an exec tool on the scheduled surface");
     }
-
     // The pinned schema stops advertising host/security/ask/node entirely.
     const properties = Object.keys(
       (execTool.parameters as { properties?: Record<string, unknown> }).properties ?? {},
@@ -71,9 +74,12 @@ describe("createOpenClawCodingTools scheduled exec target", () => {
       security: "full",
       ask: "off",
     });
+    expect(shellSpies.defaults).toHaveBeenCalledWith(
+      expect.objectContaining({ host: "gateway", ask: "always" }),
+    );
     expect(shellSpies.exec).toHaveBeenCalledWith(
       "call-1",
-      { command: "echo hi", host: "gateway" },
+      { command: "echo hi", host: "gateway", ask: "always" },
       undefined,
       undefined,
     );
@@ -93,18 +99,21 @@ describe("createOpenClawCodingTools scheduled exec target", () => {
       execute,
     };
 
-    const pinned = pinExecToolTarget(source, { host: "gateway" });
+    const pinned = pinExecToolTarget(source, { host: "gateway", ask: "always" });
     await pinned.prepareBeforeToolCallParams?.(
-      { command: "echo hi", host: "node", node: "remote", security: "full" },
+      { command: "echo hi", host: "node", node: "remote", security: "full", ask: "off" },
       { hookContext: undefined },
     );
-    pinned.finalizeBeforeToolCallParams?.({ command: "echo hi", host: "node" }, {});
+    pinned.finalizeBeforeToolCallParams?.({ command: "echo hi", host: "node", ask: "off" }, {});
 
     expect(prepare).toHaveBeenCalledWith(
-      { command: "echo hi", host: "gateway" },
+      { command: "echo hi", host: "gateway", ask: "always" },
       { hookContext: undefined },
     );
-    expect(finalize).toHaveBeenCalledWith({ command: "echo hi", host: "gateway" }, {});
+    expect(finalize).toHaveBeenCalledWith(
+      { command: "echo hi", host: "gateway", ask: "always" },
+      {},
+    );
   });
 
   it("keeps baseline exec behavior without a scheduled exec target", async () => {

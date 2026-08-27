@@ -26,9 +26,9 @@ describe("reconcileToolsAllowAuthority exec pin", () => {
       job,
       previouslyUsedToolRuntime: true,
       explicitlyMutatesToolsAllow: true,
-      toolsAllowExecTarget: { version: 1, host: "gateway" },
+      toolsAllowExecTarget: { version: 1, host: "gateway", ask: "always" },
     });
-    expect(job.toolsAllowExecTarget).toEqual({ version: 1, host: "gateway" });
+    expect(job.toolsAllowExecTarget).toEqual({ version: 1, host: "gateway", ask: "always" });
   });
 
   it("never stamps a pin onto a cap that does not grant exec", () => {
@@ -44,7 +44,7 @@ describe("reconcileToolsAllowAuthority exec pin", () => {
 
   it("clears the pin when the cap is explicitly rewritten without the server fact", () => {
     const job = toolJob(["exec"]);
-    job.toolsAllowExecTarget = { version: 1, host: "gateway" };
+    job.toolsAllowExecTarget = { version: 1, host: "gateway", ask: "always" };
     reconcileToolsAllowAuthority({
       job,
       previouslyUsedToolRuntime: true,
@@ -55,13 +55,13 @@ describe("reconcileToolsAllowAuthority exec pin", () => {
 
   it("keeps the pin across edits that do not touch the cap", () => {
     const job = toolJob(["exec"]);
-    job.toolsAllowExecTarget = { version: 1, host: "gateway" };
+    job.toolsAllowExecTarget = { version: 1, host: "gateway", ask: "always" };
     reconcileToolsAllowAuthority({
       job,
       previouslyUsedToolRuntime: true,
       explicitlyMutatesToolsAllow: false,
     });
-    expect(job.toolsAllowExecTarget).toEqual({ version: 1, host: "gateway" });
+    expect(job.toolsAllowExecTarget).toEqual({ version: 1, host: "gateway", ask: "always" });
   });
 
   it("drops the pin when the job stops using a tool runtime cap", () => {

@@ -13,7 +13,7 @@ type NormalizedCronCreatorTool = {
   name: string;
   pluginId?: string;
   aliasName?: string;
-  execTarget?: { host: "gateway" };
+  execTarget?: { host: "gateway"; ask?: "always" };
 };
 
 type CronJobUpdatePatchPlan =
@@ -73,6 +73,11 @@ export function replaceWithEffectiveCronCreatorToolAllowlist<T extends { name: s
       }
       if (existing.execTarget && !projection?.execTarget) {
         delete existing.execTarget;
+      } else if (
+        existing.execTarget?.ask === "always" &&
+        projection?.execTarget?.ask !== "always"
+      ) {
+        delete existing.execTarget.ask;
       }
       continue;
     }
@@ -84,7 +89,7 @@ export function replaceWithEffectiveCronCreatorToolAllowlist<T extends { name: s
       name,
       ...(pluginId ? { pluginId } : {}),
       ...(aliasName && aliasName !== name ? { aliasName } : {}),
-      ...(projection?.execTarget ? { execTarget: { host: projection.execTarget.host } } : {}),
+      ...(projection?.execTarget ? { execTarget: { ...projection.execTarget } } : {}),
     });
   }
 }
@@ -135,7 +140,10 @@ function normalizeCronCreatorToolsAllow(
         : normalizeToolPolicyName(entry.aliasName);
     const execTarget =
       typeof entry !== "string" && entry.execTarget?.host === "gateway"
-        ? ({ host: "gateway" } as const)
+        ? ({
+            host: "gateway" as const,
+            ...(entry.execTarget.ask === "always" ? { ask: "always" as const } : {}),
+          } as const)
         : undefined;
     normalized.push({
       name,
@@ -150,11 +158,11 @@ function normalizeCronCreatorToolsAllow(
 /** Restrict-only exec target present only when the creator's exec grant is host-pinned. */
 export function resolveCronCreatorExecToolTarget(
   entries: readonly CronCreatorToolAllowlistEntry[] | undefined,
-): { host: "gateway" } | undefined {
+): { host: "gateway"; ask?: "always" } | undefined {
   const execEntry = normalizeCronCreatorToolsAllow(entries ?? []).find(
     (tool) => tool.name === "exec",
   );
-  return execEntry?.execTarget ? { host: execEntry.execTarget.host } : undefined;
+  return execEntry?.execTarget ? { ...execEntry.execTarget } : undefined;
 }
 
 function hasCronTriggerScript(value: unknown): boolean {

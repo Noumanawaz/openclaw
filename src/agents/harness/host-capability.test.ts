@@ -268,6 +268,10 @@ describe("agent harness host capability", () => {
       undefined,
       undefined,
     );
+    expect(readCronScheduledToolProjection(alias)).toEqual({
+      targetTool: "exec",
+      execTarget: { host: "gateway", ask: "always" },
+    });
     expect(result.content).toEqual([
       { type: "text", text: "Command still running. Use gateway_process for follow-up." },
     ]);

@@ -13,8 +13,8 @@ export type CronCreatorToolAllowlistEntry =
       pluginId?: string;
       /** Runtime-specific alias the creator surface presented for this tool. */
       aliasName?: string;
-      /** Restrict-only execution target carried by a host-created alias projection. */
-      execTarget?: { host: "gateway" };
+      /** Restrict-only execution policy carried by a host-created alias projection. */
+      execTarget?: { host: "gateway"; ask?: "always" };
     };
 
 type CronToolsAllowCaptureProvenance = {

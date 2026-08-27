@@ -577,10 +577,9 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
   options?.recordToolPrepStage?.("workspace-policy");
   const { cleanupMs: cleanupMsOverride, ...execDefaults } = options?.exec ?? {};
   const effectiveExecPolicy = applyExecPolicyLayer(execConfig, options?.exec);
-  // A scheduled cap captured from a host-pinned creator surface narrows the
-  // rebuilt exec tool to that execution target: the host default follows the
-  // pin so the forced target passes exec's configured-host policy, and the
-  // tool itself is wrapped below so caller arguments cannot retarget it.
+  // A scheduled cap narrows the rebuilt exec tool to its captured policy.
+  // Defaults carry host/approval floors into resolution; the wrapper below
+  // prevents caller arguments from weakening either restriction.
   const scheduledExecTarget = options?.scheduledToolPolicy?.execTarget;
   const processToolAvailabilityRef: NonNullable<ExecToolDefaults["processToolAvailabilityRef"]> =
     {};
@@ -615,7 +614,7 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
       host: scheduledExecTarget?.host ?? options?.exec?.host ?? execConfig.host,
       mode: effectiveExecPolicy.mode,
       security: effectiveExecPolicy.security,
-      ask: effectiveExecPolicy.ask,
+      ask: scheduledExecTarget?.ask ?? effectiveExecPolicy.ask,
       config: execRuntimeConfig,
       preparedRunEnvironment,
       reviewer: options?.exec?.reviewer ?? execConfig.reviewer,
@@ -782,7 +781,7 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
   const scheduledCoreTools = scheduledExecTarget
     ? coreTools.map((tool) =>
         tool.name === "exec"
-          ? copyAgentToolMetadata(tool, pinExecToolTarget(tool, { host: scheduledExecTarget.host }))
+          ? copyAgentToolMetadata(tool, pinExecToolTarget(tool, scheduledExecTarget))
           : tool,
       )
     : coreTools;

@@ -40,14 +40,20 @@ export function normalizeCronScheduledToolCallerOrigin(
 export type CronToolsAllowExecTarget = {
   version: 1;
   host: "gateway";
+  /** Mandatory approval floor inherited from the captured creator surface. */
+  ask?: "always";
 };
 
-/** Accepts only the exact restrict-only shape; anything else stays absent. */
+/** Retains only recognized restrictions; future fields remain reader-safe. */
 export function normalizeCronToolsAllowExecTarget(
   value: unknown,
 ): CronToolsAllowExecTarget | undefined {
   return isRecord(value) && value.version === 1 && value.host === "gateway"
-    ? { version: 1, host: "gateway" }
+    ? {
+        version: 1,
+        host: "gateway",
+        ...(value.ask === "always" ? { ask: "always" } : {}),
+      }
     : undefined;
 }
 

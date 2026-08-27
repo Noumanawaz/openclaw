@@ -144,22 +144,30 @@ describe("resolveScheduledToolCallerContext", () => {
       resolveScheduledToolPolicyContext({
         toolsAllow: ["exec"],
         scheduledToolPolicy: { version: 1, mode: "trusted" },
-        execTarget: { version: 1, host: "gateway" },
+        execTarget: { version: 1, host: "gateway", ask: "always" },
       }),
-    ).toEqual({ version: 1, mode: "trusted", execTarget: { host: "gateway" } });
+    ).toEqual({
+      version: 1,
+      mode: "trusted",
+      execTarget: { host: "gateway", ask: "always" },
+    });
   });
 
   it("preserves a trusted context's pin when re-resolved through the same API", () => {
     const first = resolveScheduledToolPolicyContext({
       toolsAllow: ["exec"],
       scheduledToolPolicy: { version: 1, mode: "trusted" },
-      execTarget: { version: 1, host: "gateway" },
+      execTarget: { version: 1, host: "gateway", ask: "always" },
     });
     const again = resolveScheduledToolPolicyContext({
       toolsAllow: ["exec"],
       scheduledToolPolicy: first,
     });
-    expect(again).toEqual({ version: 1, mode: "trusted", execTarget: { host: "gateway" } });
+    expect(again).toEqual({
+      version: 1,
+      mode: "trusted",
+      execTarget: { host: "gateway", ask: "always" },
+    });
   });
 
   it("preserves the pin when re-resolving an already-resolved context", () => {
@@ -171,15 +179,15 @@ describe("resolveScheduledToolCallerContext", () => {
         ownerSessionKey: "agent:main:main",
         ownerAccountId: "creator",
       },
-      execTarget: { version: 1, host: "gateway" },
+      execTarget: { version: 1, host: "gateway", ask: "always" },
     });
-    expect(first?.execTarget).toEqual({ host: "gateway" });
+    expect(first?.execTarget).toEqual({ host: "gateway", ask: "always" });
     const again = resolveScheduledToolPolicyContext({
       toolsAllow: ["exec"],
       scheduledToolPolicy: first,
       execTarget: first?.execTarget,
     });
-    expect(again?.execTarget).toEqual({ host: "gateway" });
+    expect(again?.execTarget).toEqual({ host: "gateway", ask: "always" });
   });
 
   it("ignores invalid exec pin shapes instead of widening or failing", () => {

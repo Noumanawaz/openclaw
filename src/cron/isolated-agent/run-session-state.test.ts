@@ -279,7 +279,7 @@ describe("createPersistCronSessionEntry", () => {
         ownerAccountId: "work",
       },
       scheduledToolCallerOrigin: { kind: "local" },
-      toolsAllowExecTarget: { version: 1, host: "gateway" },
+      toolsAllowExecTarget: { version: 1, host: "gateway", ask: "always" },
       persistSessionEntry,
     });
 
@@ -295,6 +295,7 @@ describe("createPersistCronSessionEntry", () => {
     expect(store[runSessionKey]?.cronRunContinuation?.toolsAllowExecTarget).toEqual({
       version: 1,
       host: "gateway",
+      ask: "always",
     });
     expect(store[runSessionKey]?.cronRunContinuation?.scheduledToolPolicy).toEqual({
       version: 1,
