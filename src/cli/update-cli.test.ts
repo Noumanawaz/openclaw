@@ -1866,6 +1866,7 @@ describe("update-cli", () => {
 
       await expect(
         maybeRestartService({
+          channel: "stable",
           shouldRestart: true,
           result: makeOkUpdateResult({
             mode,
@@ -1910,6 +1911,7 @@ describe("update-cli", () => {
 
     await expect(
       maybeRestartService({
+        channel: "stable",
         shouldRestart: true,
         result: makeOkUpdateResult({ mode: "npm", after: { version: "2026.4.24" } }),
         opts: { json: true },
@@ -1965,6 +1967,7 @@ describe("update-cli", () => {
 
     await expect(
       maybeRestartService({
+        channel: "stable",
         shouldRestart: true,
         result: makeOkUpdateResult({ mode: "npm", after: { version: "2026.4.24" } }),
         opts: { json: true },

@@ -862,6 +862,7 @@ describe("recoverLaunchAgentAndRecheckGatewayHealth", () => {
         service,
         port: 18790,
         expectedVersion: "2026.5.3",
+        expectedBuildId: "new-build",
         env: { OPENCLAW_PROFILE: "stomme", OPENCLAW_PORT: "18790" },
         deps: { recoverLaunchAgent, waitForHealthy },
       }),
@@ -879,6 +880,7 @@ describe("recoverLaunchAgentAndRecheckGatewayHealth", () => {
       service,
       port: 18790,
       expectedVersion: "2026.5.3",
+      expectedBuildId: "new-build",
       env: { OPENCLAW_PROFILE: "stomme", OPENCLAW_PORT: "18790" },
       supervisorKeepsAlive: true,
     });

@@ -38,6 +38,8 @@ const mocks = vi.hoisted(() => ({
   running: true,
   loaded: true,
   listenerPids: vi.fn(() => [4242]),
+  ports: vi.fn<typeof import("../../infra/ports-inspect.js").inspectPortUsage>(),
+  probe: vi.fn<typeof import("../../gateway/probe.js").probeGateway>(),
   signal: vi.fn(),
   events: [] as string[],
   command: vi.fn<typeof import("../../daemon/systemd.js").readSystemdServiceExecStart>(),
@@ -89,8 +91,10 @@ vi.mock("../../infra/restart-stale-pids.js", async (importOriginal) => ({
   terminateStaleGatewayPids: mocks.terminateStale,
 }));
 vi.mock("../../infra/ports-inspect.js", () => ({
-  inspectPortUsage: async () => ({ port: 19305, status: "free", listeners: [], hints: [] }),
+  inspectPortUsage: mocks.ports,
 }));
+
+vi.mock("../../gateway/probe.js", () => ({ probeGateway: mocks.probe }));
 
 vi.mock("../../daemon/systemd.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../daemon/systemd.js")>()),
@@ -181,6 +185,13 @@ beforeEach(async () => {
   );
   await fs.writeFile(path.join(root, "dist", "index.js"), "export {};\n");
   await writeConfig(VERSION);
+  mocks.ports.mockImplementation(async (port) => ({
+    port,
+    status: "free",
+    listeners: [],
+    hints: [],
+  }));
+  mocks.probe.mockReset();
   mocks.running = true;
   mocks.loaded = true;
   mocks.inLaunchd = false;
@@ -225,27 +236,43 @@ afterEach(async () => {
 });
 
 describe("preserved update activation with real version guards", () => {
-  it.each(
-    (["git", "npm", "pnpm", "bun"] as const).flatMap((mode) =>
+  it.each([
+    ...(["git", "npm", "pnpm", "bun"] as const).flatMap((mode) =>
       (["sealed", "unknown"] as const).flatMap((denial) =>
         ["healthy", "json denial", "stale retry", "uninspectable", "foreign"].map((outcome) => ({
           mode,
           denial,
           outcome,
+          channel: "stable" as const,
+          phase: "late",
         })),
       ),
     ),
-  )(
-    "handles late $denial denial for $mode activation ($outcome)",
-    async ({ mode, denial, outcome }) => {
-      mocks.capability.mockResolvedValue({ kind: "writable" });
+    ...(["sealed", "unknown"] as const).flatMap((denial) =>
+      ["initial", "late"].flatMap((phase) =>
+        ["healthy", "stale build", "missing build", "stale retry"].map((outcome) => ({
+          mode: "git" as const,
+          denial,
+          outcome,
+          channel: "dev" as const,
+          phase,
+        })),
+      ),
+    ),
+  ])(
+    "handles $phase $denial denial for $channel $mode activation ($outcome)",
+    async ({ mode, denial, outcome, channel, phase }) => {
+      const late = phase === "late";
+      mocks.capability.mockResolvedValue(
+        late ? { kind: "writable" } : { kind: denial, detail: "owner denial" },
+      );
       const before = await maybeStopManagedServiceBeforeMutableUpdate({
         updateInstallKind: mode === "git" ? "git" : "package",
         root,
         shouldRestart: true,
         jsonMode: true,
       });
-      expect(before.serviceUpdateVerdict).toMatchObject({ kind: "owned", refreshDefinition: true });
+      expect(before.serviceUpdateVerdict).toMatchObject({ kind: "owned", refreshDefinition: late });
       const repair = vi.spyOn(startRepair, "repairLoadedGatewayServiceForStart");
       mocks.child.mockImplementation(async (args) => {
         if (args.includes("install")) {
@@ -289,18 +316,51 @@ describe("preserved update activation with real version guards", () => {
           termination: "exit",
         };
       });
+      const commandBefore = await mocks.command(process.env);
+      mocks.ports.mockImplementation(async (port) => ({
+        port,
+        status: "busy",
+        listeners: [{ pid: 4242, command: "openclaw-gateway" }],
+        hints: [],
+      }));
+      mocks.probe.mockImplementation(async ({ url }) => ({
+        ok: true,
+        url,
+        connectLatencyMs: 1,
+        error: null,
+        close: null,
+        auth: { role: "operator", scopes: ["operator.read"], capability: "read_only" },
+        server: {
+          version: VERSION,
+          connId: "fixture",
+          ...(outcome === "missing build"
+            ? {}
+            : { buildId: outcome === "stale build" ? "old-build" : "new-build" }),
+        },
+        health: {},
+        status: {},
+        presence: [],
+        configSnapshot: null,
+      }));
+      const { waitForGatewayHealthyRestart } = await vi.importActual<
+        typeof import("../daemon-cli/restart-health.js")
+      >("../daemon-cli/restart-health.js");
       let retried = false;
-      mocks.health.mockImplementation(async ({ port, expectedVersion }) => {
-        const stale = outcome === "stale retry" && expectedVersion === VERSION && !retried;
+      mocks.health.mockImplementation(async (params) => {
+        const stale = outcome === "stale retry" && params.expectedVersion === VERSION && !retried;
         retried ||= stale;
-        return {
-          healthy: !stale,
-          staleGatewayPids: stale ? [4242] : [],
-          runtime: { status: "running" },
-          portUsage: { port, status: "busy", listeners: [], hints: [] },
-        };
+        if (stale) {
+          return {
+            healthy: false,
+            staleGatewayPids: [4242],
+            runtime: { status: "running" },
+            portUsage: { port: params.port, status: "busy", listeners: [], hints: [] },
+          };
+        }
+        return await waitForGatewayHealthyRestart(params);
       });
       const activated = await maybeRestartService({
+        channel,
         shouldRestart: true,
         result: {
           status: "ok",
@@ -309,24 +369,27 @@ describe("preserved update activation with real version guards", () => {
           steps: [],
           durationMs: 0,
           before: { version: "2026.1.1" },
-          after: { version: VERSION },
+          after: { version: VERSION, buildId: "new-build" },
         },
         opts: { json: outcome === "json denial" },
-        refreshServiceEnv: true,
+        refreshServiceEnv: late,
         serviceUpdateVerdict: before.serviceUpdateVerdict,
         serviceEnv: before.serviceEnv,
-        gatewayPort: 19001,
+        gatewayPort: late ? 19001 : 19305,
         restartScriptPath: "/fixture/prepared-restart.sh",
         timeoutMs: 1000,
       });
-      const allowed = ["healthy", "json denial", "stale retry"].includes(outcome);
-      expect(activated).toBe(allowed);
+      const allowed = !["uninspectable", "foreign"].includes(outcome);
+      const buildMismatch = ["stale build", "missing build"].includes(outcome);
+      expect(activated).toBe(allowed && !buildMismatch);
       const restarts = mocks.child.mock.calls.filter(([args]) => args.includes("restart"));
       expect(restarts).toHaveLength(allowed ? (retried ? 2 : 1) : 0);
       for (const [args] of restarts) {
         expect(args).toContain("--preserve-definition");
       }
-      expect(mocks.child.mock.calls.filter(([args]) => args.includes("install"))).toHaveLength(1);
+      expect(mocks.child.mock.calls.filter(([args]) => args.includes("install"))).toHaveLength(
+        late ? 1 : 0,
+      );
       expect(mocks.restart).toHaveBeenCalledTimes(restarts.length);
       expect(mocks.health.mock.calls.every(([args]) => args.port === 19305)).toBe(true);
       if (allowed) {
@@ -336,6 +399,28 @@ describe("preserved update activation with real version guards", () => {
       }
       if (retried) {
         expect(mocks.terminateStale).toHaveBeenCalledWith([4242]);
+      }
+      if (allowed) {
+        expect(await mocks.command(process.env)).toEqual(commandBefore);
+        const verification = mocks.health.mock.calls.filter(
+          ([args]) => args.expectedVersion === VERSION,
+        );
+        expect(verification.length).toBe(retried ? 2 : 1);
+        expect(
+          verification.every(
+            ([args]) => args.expectedBuildId === (channel === "dev" ? "new-build" : undefined),
+          ),
+        ).toBe(true);
+        expect(mocks.probe.mock.calls.every(([args]) => args.url === "ws://127.0.0.1:19305")).toBe(
+          true,
+        );
+      }
+      if (buildMismatch) {
+        expect(
+          mocks.error.mock.calls.flat().concat(mocks.log.mock.calls.flat()).join("\n"),
+        ).toContain(
+          `Gateway build mismatch: expected new-build, running gateway reported ${outcome === "missing build" ? "unavailable" : "old-build"}.`,
+        );
       }
       expect(repair).not.toHaveBeenCalled();
       expect(mocks.script).not.toHaveBeenCalled();
@@ -400,6 +485,7 @@ describe("preserved update activation with real version guards", () => {
       }
     });
     const activated = await maybeRestartService({
+      channel: "stable",
       shouldRestart: true,
       result: {
         status: "ok",
@@ -592,6 +678,7 @@ describe("preserved update activation with real version guards", () => {
       });
 
       const activated = await maybeRestartService({
+        channel: "stable",
         shouldRestart: true,
         result: {
           status: "ok",
@@ -830,6 +917,7 @@ describe("preserved update activation with real version guards", () => {
         portUsage: { port, status: "free", listeners: [], hints: [] },
       }));
       result = await maybeRestartService({
+        channel: "stable",
         shouldRestart: true,
         result: {
           status: "ok",

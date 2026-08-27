@@ -188,6 +188,7 @@ export async function maybeOfferUpdateBeforeDoctor(params: {
         const activated = await serviceLifecycle.maybeRestartService({
           shouldRestart: true,
           result,
+          channel: "dev",
           opts: {},
           refreshServiceEnv: false,
           serviceUpdateVerdict:

@@ -239,7 +239,7 @@ describe("maybeOfferUpdateBeforeDoctor", () => {
     status: "ok" | "error" | "skipped";
     mode: "git";
     root: string;
-    after?: { version: string };
+    after?: { version: string; buildId?: string };
     recovery?: { serviceRestartSafe: false; reason: "source-rollback-failed" };
   }) {
     mocks.runGatewayUpdate.mockImplementation(
@@ -427,7 +427,7 @@ describe("maybeOfferUpdateBeforeDoctor", () => {
         status: "ok",
         mode: "git",
         root: "/repo/link",
-        after: { version: "2026.4.24" },
+        after: { version: "2026.4.24", buildId: "new-build" },
       });
       mocks.waitForHealthyRestart.mockResolvedValue({
         healthy: outcome === "healthy",
@@ -445,6 +445,7 @@ describe("maybeOfferUpdateBeforeDoctor", () => {
       expect(mocks.waitForHealthyRestart).toHaveBeenCalledWith(
         expect.objectContaining({
           expectedVersion: "2026.4.24",
+          expectedBuildId: "new-build",
           env: { OPENCLAW_PROFILE: "work" },
           requireRunningService: true,
         }),

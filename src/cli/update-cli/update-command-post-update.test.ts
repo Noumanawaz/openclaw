@@ -140,7 +140,10 @@ async function finishSuccessfulPackageSwitch(params: {
       root: params.packageRoot,
       ...(params.sealed && {
         before: { version: "2026.4.23" },
-        after: { version: "2026.4.24" },
+        after: {
+          version: "2026.4.24",
+          ...(params.updateMode === "git" ? { buildId: "new-build" } : {}),
+        },
       }),
       steps: [],
       durationMs: 1,
@@ -151,7 +154,7 @@ async function finishSuccessfulPackageSwitch(params: {
     configSnapshot: validConfigSnapshot,
     requestedChannel: null,
     storedChannel: null,
-    channel: "stable",
+    channel: params.updateMode === "git" ? "dev" : "stable",
     downgradeRisk: true,
     shouldRestart: Boolean(params.restartEnvironment),
     opts: {},
@@ -722,6 +725,10 @@ describe("successful update finalization ordering", () => {
           refreshDefinition: false,
           fingerprint: "sealed",
         },
+        channel: unloaded ? "dev" : "stable",
+        result: expect.objectContaining({
+          after: { version: "2026.4.24", ...(unloaded ? { buildId: "new-build" } : {}) },
+        }),
         requireRunningServiceAfterRestart: !unloaded,
       }),
     );
