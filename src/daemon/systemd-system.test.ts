@@ -1,4 +1,5 @@
 // System systemd ownership tests cover loaded, installed, and unverifiable states.
+import fs from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExecResult } from "./exec-file.js";
 
@@ -41,8 +42,12 @@ vi.mock("node:fs/promises", () => {
 });
 
 const execFileUtf8 = vi.hoisted(() =>
-  vi.fn(async (_command: string, args: string[]) =>
-    args.includes("--property=UnitPath") ? state.managerUnitPath : state.systemctl,
+  vi.fn(
+    async (
+      _command: string,
+      args: string[],
+      _options?: { timeout?: number; killSignal?: string },
+    ) => (args.includes("--property=UnitPath") ? state.managerUnitPath : state.systemctl),
   ),
 );
 vi.mock("./exec-file.js", () => ({ execFileUtf8 }));
@@ -116,6 +121,19 @@ describe("system systemd ownership", () => {
     expect(execFileUtf8).toHaveBeenCalledTimes(3);
   });
 
+  it("shares one timeout budget across system-manager ownership probes", async () => {
+    await expect(
+      assertNoSystemSystemdOwnership("openclaw-gateway.service", 50),
+    ).resolves.toBeUndefined();
+    for (const call of execFileUtf8.mock.calls) {
+      expect(call[2]).toEqual(
+        expect.objectContaining({ timeout: expect.any(Number), killSignal: "SIGKILL" }),
+      );
+      expect(call[2]?.timeout).toBeGreaterThan(0);
+      expect(call[2]?.timeout).toBeLessThanOrEqual(50);
+    }
+  });
+
   it("fails closed when the system manager cannot be queried", async () => {
     state.systemctl = {
       stdout: "",
@@ -132,6 +150,24 @@ describe("system systemd ownership", () => {
         detail: "Failed to connect to bus: Permission denied",
       },
     });
+  });
+
+  it.each([
+    "spawn systemctl ENOENT",
+    "systemctl not available",
+    "System has not been booted with systemd as init system",
+  ])("fails closed when manager absence cannot be proven: %s", async (detail) => {
+    state.systemctl = { stdout: "", stderr: detail, code: 1, termination: "exit" };
+
+    await expect(assertNoSystemSystemdOwnership("openclaw-gateway.service")).rejects.toMatchObject({
+      ownership: {
+        status: "unverifiable",
+        unitName: "openclaw-gateway.service",
+        operation: "systemctl",
+        detail,
+      },
+    });
+    expect(fs.lstat).not.toHaveBeenCalled();
   });
 
   it("does not mistake a missing system bus for a missing unit", async () => {

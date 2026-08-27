@@ -138,6 +138,62 @@ describe("resolveGatewayService", () => {
 });
 
 describe("readGatewayServiceState", () => {
+  it.each([
+    { updateInstallKind: "git" as const, shouldRestart: false },
+    { updateInstallKind: "git" as const, shouldRestart: true },
+    { updateInstallKind: "package" as const, shouldRestart: false },
+    { updateInstallKind: "package" as const, shouldRestart: true },
+  ])(
+    "allows managerless Linux preflight for $updateInstallKind restart=$shouldRestart",
+    async ({ updateInstallKind, shouldRestart }) => {
+      const { maybeStopManagedServiceBeforeMutableUpdate } =
+        await import("../cli/update-cli/update-command-service.js");
+      const home = await makeTempWorkspace("openclaw-managerless-preflight-");
+      const keys = [
+        "HOME",
+        "PATH",
+        "OPENCLAW_HOME",
+        "OPENCLAW_STATE_DIR",
+        "OPENCLAW_CONFIG_PATH",
+        "OPENCLAW_PROFILE",
+        "OPENCLAW_SUPERVISOR_MODE",
+        "OPENCLAW_SERVICE_MARKER",
+        "OPENCLAW_SERVICE_KIND",
+        "OPENCLAW_SYSTEMD_UNIT",
+        "DBUS_SESSION_BUS_ADDRESS",
+        "DBUS_SYSTEM_BUS_ADDRESS",
+        "XDG_RUNTIME_DIR",
+        "SUDO_USER",
+      ];
+      const snapshot = captureEnv(keys);
+      try {
+        setPlatform("linux");
+        for (const key of keys) {
+          delete process.env[key];
+        }
+        process.env.HOME = home;
+        process.env.PATH = home;
+        const result = await maybeStopManagedServiceBeforeMutableUpdate({
+          root: home,
+          updateInstallKind,
+          shouldRestart,
+          jsonMode: true,
+          phase: "inspect",
+          timeoutMs: 2_000,
+        });
+        expect(result.blockMessage).toBeUndefined();
+        expect(result.serviceMutationAllowed).toBe(false);
+        expect(result.serviceMutationSkipMessage).toContain("inspection is unavailable");
+        expect(result.serviceMutationSkipMessage).toContain("gateway status --deep");
+        expect(result.serviceUpdateVerdict?.kind).not.toBe("absent");
+        expect(result.stopped).toBe(false);
+      } finally {
+        snapshot.restore();
+        await fs.rm(home, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("tracks installed, loaded, and running separately", async () => {
     const hasInstalledDefinition = vi.fn(async () => false);
     const service = createService({
@@ -208,6 +264,21 @@ describe("readGatewayServiceState", () => {
       }),
       { timeoutMs: undefined },
     );
+  });
+
+  it("propagates required effective command inspection failures", async () => {
+    const readCommand = vi.fn(async () => {
+      throw new Error("manager unavailable");
+    });
+    const service = createService({ readCommand });
+
+    await expect(readGatewayServiceState(service, { requireEffective: true })).rejects.toThrow(
+      "manager unavailable",
+    );
+    expect(readCommand).toHaveBeenCalledWith(process.env, {
+      timeoutMs: undefined,
+      requireEffective: true,
+    });
   });
 
   it("preserves runtime probe failures as an explicit unknown state", async () => {

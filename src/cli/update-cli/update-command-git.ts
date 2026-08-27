@@ -187,9 +187,10 @@ export function createBeforeGitMutation(params: {
       throw new UpdateCommandAbort();
     }
     return {
-      // Only a positively owned service may be rewritten. Activation
-      // additionally requires this update to have stopped it.
-      allowGatewayServiceRepair: preManagedServiceStop?.serviceMatchesMutationRoot === true,
+      // Root ownership permits activation; rewriting also requires definition authority.
+      allowGatewayServiceRepair:
+        preManagedServiceStop?.serviceUpdateVerdict?.kind === "owned" &&
+        preManagedServiceStop.serviceUpdateVerdict.refreshDefinition,
       allowGatewayActivation:
         params.shouldRestart &&
         preManagedServiceStop?.stopped === true &&

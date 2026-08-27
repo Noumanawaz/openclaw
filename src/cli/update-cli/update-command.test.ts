@@ -159,9 +159,9 @@ describe("shouldPrepareUpdatedInstallRestart", () => {
 });
 
 describe("resolveUpdatedGatewayRestartPort", () => {
-  it("uses the managed service port ahead of the caller environment", () => {
+  it("uses the managed service port ahead of the caller environment", async () => {
     expect(
-      resolveUpdatedGatewayRestartPort({
+      await resolveUpdatedGatewayRestartPort({
         config: { gateway: { port: 19000 } } as never,
         processEnv: { OPENCLAW_GATEWAY_PORT: "19001" },
         serviceEnv: { OPENCLAW_GATEWAY_PORT: "19002" },
@@ -169,9 +169,9 @@ describe("resolveUpdatedGatewayRestartPort", () => {
     ).toBe(19002);
   });
 
-  it("falls back to the post-update config when no service port is available", () => {
+  it("falls back to the post-update config when no service port is available", async () => {
     expect(
-      resolveUpdatedGatewayRestartPort({
+      await resolveUpdatedGatewayRestartPort({
         config: { gateway: { port: 19000 } } as never,
         processEnv: {},
         serviceEnv: {},
@@ -181,49 +181,22 @@ describe("resolveUpdatedGatewayRestartPort", () => {
 });
 
 describe("resolvePostUpdateServiceStateReadEnv", () => {
-  it("keeps package restart preparation anchored to the pre-update service env", () => {
-    const processEnv = {
-      OPENCLAW_STATE_DIR: "/source/state",
-      OPENCLAW_CONFIG_PATH: "/source/openclaw.json",
-    } as NodeJS.ProcessEnv;
-    const prePackageServiceEnv = {
-      OPENCLAW_STATE_DIR: "/managed/state",
-      OPENCLAW_CONFIG_PATH: "/managed/openclaw.json",
-    } as NodeJS.ProcessEnv;
+  it.each(["git", "npm", "pnpm", "bun"] as const)(
+    "keeps %s restart preparation anchored to the pre-update service env",
+    (updateMode) => {
+      const processEnv = { OPENCLAW_STATE_DIR: "/source/state" };
+      const preManagedServiceEnv = { OPENCLAW_STATE_DIR: "/managed/state" };
+      expect(
+        resolvePostUpdateServiceStateReadEnv({ updateMode, processEnv, preManagedServiceEnv }),
+      ).toEqual(preManagedServiceEnv);
+    },
+  );
 
-    expect(
-      resolvePostUpdateServiceStateReadEnv({
-        updateMode: "npm",
-        processEnv,
-        prePackageServiceEnv,
-      }),
-    ).toBe(prePackageServiceEnv);
-  });
-
-  it("keeps git updates tied to the caller environment", () => {
-    const processEnv = { OPENCLAW_STATE_DIR: "/source/state" } as NodeJS.ProcessEnv;
-    const prePackageServiceEnv = { OPENCLAW_STATE_DIR: "/managed/state" } as NodeJS.ProcessEnv;
-
-    expect(
-      resolvePostUpdateServiceStateReadEnv({
-        updateMode: "git",
-        processEnv,
-        prePackageServiceEnv,
-      }),
-    ).toBe(processEnv);
-  });
-
-  it("uses the managed service environment for git updates stopped by this updater", () => {
-    const processEnv = { OPENCLAW_STATE_DIR: "/source/state" } as NodeJS.ProcessEnv;
-    const preManagedServiceEnv = { OPENCLAW_STATE_DIR: "/managed/state" } as NodeJS.ProcessEnv;
-
-    expect(
-      resolvePostUpdateServiceStateReadEnv({
-        updateMode: "git",
-        processEnv,
-        preManagedServiceEnv,
-      }),
-    ).toBe(preManagedServiceEnv);
+  it("uses the caller environment when no managed service context was captured", () => {
+    const processEnv = { OPENCLAW_STATE_DIR: "/source/state" };
+    expect(resolvePostUpdateServiceStateReadEnv({ updateMode: "git", processEnv })).toEqual(
+      processEnv,
+    );
   });
 });
 
