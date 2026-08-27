@@ -36,7 +36,7 @@ export type SidebarSessionSection<Row> = {
     | `person:${string}`
     | `catalog:${string}`;
   category?: string;
-  personOwner?: { type: string; id: string; label?: string; avatarUrl?: string };
+  personOwner?: SidebarGroupableOwner & { id: string };
   /** Built-in smart group-conversation section (kind "group" rows). */
   groups?: boolean;
   /** Built-in smart coding section (worktree/exec-node/ACP sessions). */
@@ -147,12 +147,22 @@ function sessionRowChannel(row: GatewaySessionRow): string {
   return row.channel ?? parseSessionKeyParts(row.key)?.channel ?? UNGROUPED_ID;
 }
 
+export function sessionActorGroupId(owner: SidebarGroupableOwner | undefined): string {
+  const identity = owner?.identity;
+  if (!identity) {
+    return UNGROUPED_ID;
+  }
+  return identity.type === "profile" || identity.type === "agent"
+    ? `${identity.type}:${identity.id}`
+    : JSON.stringify(identity, Object.keys(identity).toSorted());
+}
+
 function resolveSessionGroupId(row: GatewaySessionRow, mode: SessionsGroupBy, now: number): string {
   switch (mode) {
     case "category":
       return row.category?.trim() ?? UNGROUPED_ID;
     case "person":
-      return row.owner?.actor.id?.trim() || UNGROUPED_ID;
+      return sessionActorGroupId(row.owner?.actor);
     case "channel":
       return sessionRowChannel(row);
     case "kind":
@@ -201,10 +211,18 @@ export function normalizeSidebarSessionsGrouping(raw: unknown): SidebarSessionsG
   return raw === "none" || raw === "person" ? raw : "category";
 }
 
+type SidebarGroupableOwner = {
+  type: string;
+  id?: string;
+  label?: string;
+  avatarUrl?: string;
+  identity?: NonNullable<GatewaySessionRow["owner"]>["actor"]["identity"];
+};
+
 type SidebarGroupableRow = {
   pinned?: boolean;
   category?: string | null;
-  owner?: { actor: { type: string; id?: string; label?: string; avatarUrl?: string } };
+  owner?: { actor: SidebarGroupableOwner };
   /** Session kind from the gateway row; "group" rows form the Groups zone. */
   kind?: string;
   /** Session bound to a managed worktree or exec node (Coding zone). */
@@ -270,20 +288,16 @@ export function groupSidebarSessionRows<Row extends SidebarGroupableRow>(
       continue;
     }
     const owner = grouping === "person" ? row.owner?.actor : undefined;
-    const ownerId = owner?.id?.trim();
-    if (owner && ownerId) {
-      const personSection = people.get(ownerId);
+    const ownerId = owner?.identity?.id;
+    const ownerKey = sessionActorGroupId(owner);
+    if (owner && ownerId && ownerKey) {
+      const personSection = people.get(ownerKey);
       if (personSection) {
         personSection.rows.push(row);
       } else {
-        people.set(ownerId, {
-          id: `person:${ownerId}`,
-          personOwner: {
-            type: owner.type,
-            id: ownerId,
-            ...(owner.label ? { label: owner.label } : {}),
-            ...(owner.avatarUrl ? { avatarUrl: owner.avatarUrl } : {}),
-          },
+        people.set(ownerKey, {
+          id: `person:${ownerKey}`,
+          personOwner: { ...owner, id: ownerId },
           rows: [row],
         });
       }
@@ -319,9 +333,17 @@ export function groupSidebarSessionRows<Row extends SidebarGroupableRow>(
       const leftOwner = left.personOwner!;
       const rightOwner = right.personOwner!;
       const leftRank =
-        leftOwner.id === options.selfOwnerId ? 0 : leftOwner.type === "agent" ? 2 : 1;
+        leftOwner.identity?.type === "agent"
+          ? 2
+          : leftOwner.identity?.type === "profile" && leftOwner.id === options.selfOwnerId
+            ? 0
+            : 1;
       const rightRank =
-        rightOwner.id === options.selfOwnerId ? 0 : rightOwner.type === "agent" ? 2 : 1;
+        rightOwner.identity?.type === "agent"
+          ? 2
+          : rightOwner.identity?.type === "profile" && rightOwner.id === options.selfOwnerId
+            ? 0
+            : 1;
       return (
         leftRank - rightRank ||
         (leftOwner.label || leftOwner.id).localeCompare(rightOwner.label || rightOwner.id) ||

@@ -259,7 +259,7 @@ const hoisted = vi.hoisted(() => ({
   activeEmbeddedRunSessionKeys: [] as string[],
   markRestartAbortedMainSessions: vi.fn(async (_params: unknown) => ({ marked: 1, skipped: 0 })),
   runtimeConfig: { value: { session: { store: "/tmp/active-sessions.json" } } as OpenClawConfig },
-  assertOpenClawDatabasesReadyForRestart: vi.fn(() => {}),
+  assertOpenClawDatabasesReady: vi.fn(() => {}),
   applyLoggingConfig: vi.fn(),
   resetSkillSnapshotConfigFingerprintCache: vi.fn(),
   reloadEvents: [] as string[],
@@ -355,7 +355,7 @@ vi.mock("../config/config.js", async () => {
 });
 
 vi.mock("../state/openclaw-database-preflight.js", () => ({
-  assertOpenClawDatabasesReadyForRestart: hoisted.assertOpenClawDatabasesReadyForRestart,
+  assertOpenClawDatabasesReady: hoisted.assertOpenClawDatabasesReady,
 }));
 
 vi.mock("../logging/logger.js", async (importOriginal) => ({
@@ -866,7 +866,7 @@ function createManagedRestartSequenceHarness(
 
   return {
     activateRuntimeSecrets,
-    assertRestartReady: hoisted.assertOpenClawDatabasesReadyForRestart,
+    assertRestartReady: hoisted.assertOpenClawDatabasesReady,
     deferredConfig,
     initialConfig,
     invalidConfig,
@@ -938,7 +938,7 @@ afterEach(() => {
   hoisted.activeEmbeddedRunSessionKeys.length = 0;
   hoisted.markRestartAbortedMainSessions.mockClear();
   hoisted.runtimeConfig.value = { session: { store: "/tmp/active-sessions.json" } };
-  hoisted.assertOpenClawDatabasesReadyForRestart.mockClear();
+  hoisted.assertOpenClawDatabasesReady.mockClear();
   hoisted.reloadEvents.length = 0;
   hoisted.advancePreparedModelRuntimeConfig.mockClear();
   hoisted.markPreparedModelRuntimeSnapshotsStale.mockClear();

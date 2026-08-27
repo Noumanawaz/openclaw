@@ -24,6 +24,7 @@ import {
 import { createDiagnosticMessageLifecycle } from "../../logging/message-lifecycle.js";
 import { stripLegacyMediaContextFields } from "../../media/media-facts.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
+import { prepareChannelParticipantObservation } from "../../sessions/session-participant-input.js";
 import { normalizeTtsAutoMode } from "../../tts/tts-config.js";
 import type { FinalizedRuntimeMsgContext as FinalizedMsgContext } from "../templating.js";
 import { normalizeVerboseLevel } from "../thinking.js";
@@ -69,6 +70,7 @@ export async function gatherDispatchRequest(
     ? params.ctx
     : finalizeInboundContext(params.ctx);
   const turnAdoptionLifecycle = params.replyOptions?.turnAdoptionLifecycle;
+  prepareChannelParticipantObservation(ctx);
   const turnAdoptionState = { adopted: false };
   const normalizedParams: DispatchFromConfigParams = {
     ...params,

@@ -52,6 +52,7 @@ function recordSubagentControllerParticipant(params: {
   cfg: OpenClawConfig;
   controller: ResolvedSubagentController;
   entry: SubagentRunRecord;
+  promptedAt: number;
 }): void {
   const requesterAgentId = params.controller.controllerAgentId;
   if (!requesterAgentId) {
@@ -62,10 +63,10 @@ function recordSubagentControllerParticipant(params: {
     return;
   }
   recordSessionParticipantBestEffort({
-    actor: { type: "agent", id: requesterAgentId },
+    identity: { type: "agent", id: requesterAgentId },
+    promptedAt: params.promptedAt,
     agentId: targetAgentId,
     sessionKey: params.entry.childSessionKey,
-    source: "agent",
     storePath: resolveSessionStorePathCore(params.cfg.session?.store, { agentId: targetAgentId }),
   });
 }
@@ -169,6 +170,7 @@ export async function steerControlledSubagentRun(params: {
       text: string;
     }
 > {
+  const promptedAt = Date.now();
   if (params.controller.controlScope !== "children") {
     return {
       status: "forbidden",
@@ -344,7 +346,7 @@ export async function steerControlledSubagentRun(params: {
     if (typeof response?.runId === "string" && response.runId) {
       runId = response.runId;
     }
-    recordSubagentControllerParticipant(params);
+    recordSubagentControllerParticipant({ ...params, promptedAt });
     let acceptedSessionEntry: SessionEntry | undefined;
     try {
       acceptedSessionEntry = loadSessionEntry({
@@ -430,6 +432,7 @@ export async function sendControlledSubagentMessage(params: {
   entry: SubagentRunRecord;
   message: string;
 }) {
+  const promptedAt = Date.now();
   const ownershipError = ensureSubagentControllerOwnsRun({
     cfg: params.cfg,
     controller: params.controller,
@@ -501,7 +504,7 @@ export async function sendControlledSubagentMessage(params: {
     if (responseRunId) {
       runId = responseRunId;
     }
-    recordSubagentControllerParticipant(params);
+    recordSubagentControllerParticipant({ ...params, promptedAt });
 
     const result = await waitForAgentRunAndReadUpdatedAssistantReply({
       runId,

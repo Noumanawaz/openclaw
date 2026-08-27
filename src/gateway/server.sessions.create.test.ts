@@ -2180,6 +2180,7 @@ test.each([
       worktreeId = created.payload?.worktree.id;
       expect(created.payload?.worktree.branch).toBe("openclaw/attachment-repair");
       expect(created.payload?.entry).toMatchObject(expectedEntry);
+      expect(created.payload, JSON.stringify(created.payload)).toHaveProperty("runStarted", true);
       const sessionKey = requireNonEmptyString(created.payload?.key, "created session key");
       await waitForFast(() => expect(dashboardTitleScheduleMocks.schedule).toHaveBeenCalled());
       expect(loadSessionEntry({ agentId: "main", sessionKey, storePath })).toMatchObject({

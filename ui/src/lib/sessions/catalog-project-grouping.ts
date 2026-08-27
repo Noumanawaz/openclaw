@@ -1,4 +1,5 @@
 import type { SessionCatalogSession } from "../../../../packages/gateway-protocol/src/index.ts";
+import { sessionActorGroupId } from "./grouping.ts";
 
 export type CatalogProjectGrouping = "project" | "person" | "none";
 
@@ -96,18 +97,19 @@ export function groupCatalogSessionsByPerson(sessions: readonly SessionCatalogSe
 
   for (const session of sessions) {
     const actor = session.createdActor;
-    if (!actor?.id) {
+    const actorGroupId = sessionActorGroupId(actor);
+    if (!actor?.identity || !actorGroupId) {
       ungrouped.push(session);
       continue;
     }
-    const key = `person:${actor.id}`;
+    const key = `person:${actorGroupId}`;
     let group = groupsById.get(key);
     if (!group) {
-      const label = actor.label?.trim() || actor.id;
+      const label = actor.label?.trim() || actor.identity.id;
       group = {
         kind: "person",
         key,
-        legacySectionKey: key,
+        legacySectionKey: `person:${actor.id}`,
         label,
         title: `Created by ${label}`,
         sessions: [],

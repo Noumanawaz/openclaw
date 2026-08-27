@@ -25,7 +25,10 @@ import {
   connectGatewayClient,
   disconnectGatewayClient,
 } from "../../src/gateway/test-helpers.e2e.js";
-import { closeOpenClawAgentDatabasesForTest } from "../../src/state/openclaw-agent-db.js";
+import {
+  closeOpenClawAgentDatabaseByPath,
+  closeOpenClawAgentDatabasesForTest,
+} from "../../src/state/openclaw-agent-db.js";
 import { closeOpenClawStateDatabaseForTest } from "../../src/state/openclaw-state-db.js";
 import { sleep } from "../../src/utils.js";
 import { createOpenClawTestInstance } from "./openclaw-test-instance.js";
@@ -167,9 +170,6 @@ export async function runSqliteSessionsTranscriptsFlipProof(options: RunOptions 
     const validateDoctor = await runDoctor(inst, "validate", context.storePath);
     await record("after-doctor-validate", validateDoctor);
 
-    rollbackRestore = await runRollbackRestoreProof(inst, context);
-    await record("after-rollback-restore");
-
     const client = await connectProofClient(inst, "sqlite-sessions-transcripts-flip-proof");
     try {
       await waitForHistoryContains(client, context.resetSessionKey, "legacy hello");
@@ -178,10 +178,13 @@ export async function runSqliteSessionsTranscriptsFlipProof(options: RunOptions 
     }
 
     await inst.stopGateway();
+    // Destructive Doctor maintenance owns the stopped Gateway epoch; inspect/validate stay live.
+    rollbackRestore = await runRollbackRestoreProof(inst, context);
+    await record("after-rollback-restore");
     await inst.startGateway();
     await record("after-gateway-restart");
 
-    const restartedClient = await connectProofClient(
+    let restartedClient = await connectProofClient(
       inst,
       "sqlite-sessions-transcripts-flip-proof-restart",
     );
@@ -233,6 +236,9 @@ export async function runSqliteSessionsTranscriptsFlipProof(options: RunOptions 
       await requireMockOpenAiRequest(context.mockOpenAiRequestLog);
       await record("after-full-agent-turn");
 
+      await disconnectGatewayClient(restartedClient);
+      restartedClientConnected = false;
+      await inst.stopGateway();
       const idempotentImportDoctor = await runDoctorIdempotenceProof(inst, context);
       await record("after-doctor-import-idempotence", idempotentImportDoctor);
 
@@ -242,6 +248,12 @@ export async function runSqliteSessionsTranscriptsFlipProof(options: RunOptions 
       busyContention = await runSqliteBusyContentionProof(context);
       await record("after-sqlite-busy-contention");
 
+      await inst.startGateway();
+      restartedClient = await connectProofClient(
+        inst,
+        "sqlite-sessions-transcripts-flip-proof-maintained",
+      );
+      restartedClientConnected = true;
       await runConcurrentMultiClientLifecycle(inst, context, restartedClient);
       await record("after-concurrent-multi-client");
 
@@ -694,16 +706,21 @@ async function importProofSession(
   entry: SessionEntry,
   events: TranscriptEvent[],
 ) {
-  return await importSqliteSessionRows({
-    agentId: context.agentId,
-    entry,
-    readTranscriptEvents(append) {
-      append(legacySessionEvent(sessionId));
-      events.forEach(append);
-    },
-    sessionKey,
-    storePath: context.storePath,
-  });
+  try {
+    return await importSqliteSessionRows({
+      agentId: context.agentId,
+      entry,
+      readTranscriptEvents(append) {
+        append(legacySessionEvent(sessionId));
+        events.forEach(append);
+      },
+      sessionKey,
+      storePath: context.storePath,
+    });
+  } finally {
+    // The fixture's writer lease must not outlive its import into child maintenance.
+    closeOpenClawAgentDatabaseByPath(context.agentDbPath);
+  }
 }
 
 async function runDoctor(inst: OpenClawTestInstance, mode: DoctorMode, storePath: string) {
@@ -912,23 +929,27 @@ async function appendProofMessage(
   sessionKey: string,
   message: string,
 ): Promise<void> {
-  const result = await appendTranscriptMessage(
-    {
-      agentId: context.agentId,
-      sessionId,
-      sessionKey,
-      storePath: context.storePath,
-    },
-    {
-      message: {
-        role: "assistant",
-        content: message,
-        timestamp: Date.now(),
+  try {
+    const result = await appendTranscriptMessage(
+      {
+        agentId: context.agentId,
+        sessionId,
+        sessionKey,
+        storePath: context.storePath,
       },
-    },
-  );
-  if (!result?.appended || !result.messageId) {
-    throw new Error(`appendTranscriptMessage failed for ${sessionKey}`);
+      {
+        message: {
+          role: "assistant",
+          content: message,
+          timestamp: Date.now(),
+        },
+      },
+    );
+    if (!result?.appended || !result.messageId) {
+      throw new Error(`appendTranscriptMessage failed for ${sessionKey}`);
+    }
+  } finally {
+    closeOpenClawAgentDatabaseByPath(context.agentDbPath);
   }
 }
 
