@@ -52,6 +52,9 @@ export function resolveScheduledToolPolicyContext(params: {
     return undefined;
   }
   const rawPolicy = params.scheduledToolPolicy;
+  // Already-resolved contexts carry context-only fields (ownerOrigin,
+  // execTarget) that the strict persisted-policy normalizer rejects; rebuild
+  // the closed policy shape for both modes before normalizing.
   const policy = normalizeCronScheduledToolPolicy(
     isRecord(rawPolicy) && rawPolicy.mode === "account"
       ? {
@@ -60,7 +63,9 @@ export function resolveScheduledToolPolicyContext(params: {
           ownerSessionKey: rawPolicy.ownerSessionKey,
           ownerAccountId: rawPolicy.ownerAccountId,
         }
-      : rawPolicy,
+      : isRecord(rawPolicy) && rawPolicy.mode === "trusted"
+        ? { version: rawPolicy.version, mode: rawPolicy.mode }
+        : rawPolicy,
   );
   if (!policy) {
     return undefined;

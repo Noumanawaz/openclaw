@@ -86,6 +86,9 @@ function createScheduledExecProjection(
     host: "gateway",
     ...(projection.ask ? { ask: projection.ask } : {}),
   });
+  // The spread below carries the source's symbol-keyed markers (including the
+  // before-tool-call wrap marker), so downstream trusted bridges recognize the
+  // alias as already wrapped and never replace its registered executable.
   return {
     ...pinnedTool,
     name: projection.name,
@@ -143,11 +146,29 @@ export function copyCronScheduledToolProjection(source: AnyAgentTool, target: An
 /** Restricts an exec tool to one host target even when callers submit broader arguments. */
 export function pinExecToolTarget(tool: AnyAgentTool, target: PinnedExecToolTarget): AnyAgentTool {
   const pinnedNode = target.host === "node" ? target.node?.trim() : undefined;
+  const pinArgs = (args: unknown) => pinExecToolArgs(args, target, pinnedNode);
+  const prepare = tool.prepareBeforeToolCallParams;
+  const finalize = tool.finalizeBeforeToolCallParams;
   return {
     ...tool,
     parameters: restrictExecToolParameters(tool.parameters, target.host, Boolean(pinnedNode)),
+    // The whole tool lifecycle sees only pinned arguments: preparation resolves
+    // workdir/env against the pinned host, finalize's host-consistency checks
+    // compare against the pinned host, and execution runs the pinned host —
+    // caller-supplied host/node can never leak target-specific prepared state.
+    ...(prepare
+      ? {
+          prepareBeforeToolCallParams: (args, context) => prepare(pinArgs(args), context),
+        }
+      : {}),
+    ...(finalize
+      ? {
+          finalizeBeforeToolCallParams: (params, preparedParams) =>
+            finalize(pinArgs(params), preparedParams),
+        }
+      : {}),
     execute: (toolCallId, args, signal, onUpdate) =>
-      tool.execute(toolCallId, pinExecToolArgs(args, target, pinnedNode), signal, onUpdate),
+      tool.execute(toolCallId, pinArgs(args), signal, onUpdate),
   };
 }
 

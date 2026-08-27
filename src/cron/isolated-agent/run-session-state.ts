@@ -15,10 +15,12 @@ import type { SkillSnapshot } from "../../skills/types.js";
 import {
   normalizeCronScheduledToolCallerOrigin,
   normalizeCronScheduledToolPolicy,
+  normalizeCronToolsAllowExecTarget,
 } from "../scheduled-tool-policy.js";
 import type {
   CronScheduledToolCallerOrigin,
   CronScheduledToolPolicy,
+  CronToolsAllowExecTarget,
 } from "../scheduled-tool-policy.js";
 import { setSessionRuntimeModel } from "./run.runtime.js";
 import type { resolveCronSession } from "./session.js";
@@ -246,6 +248,7 @@ export function createCronRunContinuationSession(params: {
   toolsAllowIsDefault?: boolean;
   scheduledToolPolicy?: CronScheduledToolPolicy;
   scheduledToolCallerOrigin?: CronScheduledToolCallerOrigin;
+  toolsAllowExecTarget?: CronToolsAllowExecTarget;
   cliSessionBindingFacts?: {
     extraSystemPromptStatic?: string;
     sourceReplyDeliveryMode?: "automatic" | "message_tool_only";
@@ -260,6 +263,10 @@ export function createCronRunContinuationSession(params: {
   const scheduledToolCallerOrigin = normalizeCronScheduledToolCallerOrigin(
     params.scheduledToolCallerOrigin,
   );
+  const toolsAllowExecTarget =
+    params.toolsAllow === undefined
+      ? undefined
+      : normalizeCronToolsAllowExecTarget(params.toolsAllowExecTarget);
   const continuation: NonNullable<SessionEntry["cronRunContinuation"]> = {
     lifecycleRevision: params.cronSession.lifecycleRevision,
     phase: "running" as const,
@@ -267,6 +274,7 @@ export function createCronRunContinuationSession(params: {
     ...(params.toolsAllowIsDefault === true ? { toolsAllowIsDefault: true } : {}),
     ...(scheduledToolPolicy ? { scheduledToolPolicy } : {}),
     ...(scheduledToolPolicy?.mode === "account" ? { scheduledToolCallerOrigin } : {}),
+    ...(toolsAllowExecTarget ? { toolsAllowExecTarget } : {}),
     ...(params.cliSessionBindingFacts
       ? { cliSessionBindingFacts: { ...params.cliSessionBindingFacts } }
       : {}),

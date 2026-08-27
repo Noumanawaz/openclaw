@@ -7,6 +7,8 @@ import { describe, expect, it, vi } from "vitest";
 import "./test-helpers/fast-coding-tools.js";
 import "./test-helpers/fast-openclaw-tools.js";
 import { createOpenClawCodingTools } from "./agent-tools.js";
+import { pinExecToolTarget } from "./exec-tool-target-pinning.js";
+import type { AnyAgentTool } from "./tools/common.js";
 
 const shellSpies = vi.hoisted(() => ({
   exec: vi.fn(async () => ({ content: [], details: {} })),
@@ -75,6 +77,34 @@ describe("createOpenClawCodingTools scheduled exec target", () => {
       undefined,
       undefined,
     );
+  });
+
+  it("pins the whole tool lifecycle, including execution preparation", async () => {
+    const prepare = vi.fn(async (args: unknown) => args);
+    const finalize = vi.fn((params: unknown) => params);
+    const execute = vi.fn(async () => ({ content: [], details: {} }));
+    const source: AnyAgentTool = {
+      name: "exec",
+      label: "Exec",
+      description: "exec",
+      parameters: { type: "object", properties: {} },
+      prepareBeforeToolCallParams: prepare,
+      finalizeBeforeToolCallParams: finalize,
+      execute,
+    };
+
+    const pinned = pinExecToolTarget(source, { host: "gateway" });
+    await pinned.prepareBeforeToolCallParams?.(
+      { command: "echo hi", host: "node", node: "remote", security: "full" },
+      { hookContext: undefined },
+    );
+    pinned.finalizeBeforeToolCallParams?.({ command: "echo hi", host: "node" }, {});
+
+    expect(prepare).toHaveBeenCalledWith(
+      { command: "echo hi", host: "gateway" },
+      { hookContext: undefined },
+    );
+    expect(finalize).toHaveBeenCalledWith({ command: "echo hi", host: "gateway" }, {});
   });
 
   it("keeps baseline exec behavior without a scheduled exec target", async () => {
