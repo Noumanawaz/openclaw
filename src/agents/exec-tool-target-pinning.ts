@@ -23,7 +23,9 @@ type CronScheduledToolProjection = Readonly<{
   execute: AnyAgentTool["execute"];
 }>;
 
-const scheduledToolProjections = new WeakMap<AnyAgentTool, CronScheduledToolProjection>();
+// Keyed by tool object identity; readers may hold a narrower structural view
+// of the tool than the registering host, so the key type is plain `object`.
+const scheduledToolProjections = new WeakMap<object, CronScheduledToolProjection>();
 
 const EXEC_POLICY_PARAMETER_NAMES = new Set(["host", "security", "ask"]);
 const NODE_EXEC_PARAMETER_NAMES = new Set(["command", "workdir", "env", "timeoutSeconds", "node"]);
@@ -115,9 +117,10 @@ function createScheduledExecProjection(
  * projection; throws when a registered projection's executable or name was
  * changed after host creation, so tampered aliases never canonicalize.
  */
-export function readCronScheduledToolProjection(
-  tool: AnyAgentTool,
-): CronScheduledToolProjectionInfo | undefined {
+export function readCronScheduledToolProjection(tool: {
+  name: string;
+  execute?: unknown;
+}): CronScheduledToolProjectionInfo | undefined {
   const projection = scheduledToolProjections.get(tool);
   if (!projection) {
     return undefined;

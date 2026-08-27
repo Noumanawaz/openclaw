@@ -7,7 +7,6 @@ import {
   expandToolGroups,
   normalizeToolPolicyName,
 } from "../tool-policy.js";
-import type { AnyAgentTool } from "./common.js";
 import type { CronCreatorToolAllowlistEntry, CronToolsAllowCaptureRef } from "./cron-tool.types.js";
 
 type NormalizedCronCreatorTool = {
@@ -55,8 +54,7 @@ export function replaceWithEffectiveCronCreatorToolAllowlist<T extends { name: s
   // the same capability. The alias name is kept for explicit-cap matching only.
   const indexByName = new Map<string, number>();
   for (const tool of tools) {
-    // SAFETY: the projection registry is keyed by object identity only; a non-tool object misses.
-    const projection = readCronScheduledToolProjection(tool as unknown as AnyAgentTool);
+    const projection = readCronScheduledToolProjection(tool);
     const name = normalizeToolPolicyName(projection ? projection.targetTool : tool.name);
     if (!name) {
       continue;
