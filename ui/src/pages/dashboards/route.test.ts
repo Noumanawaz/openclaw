@@ -55,13 +55,11 @@ describe("dashboards route", () => {
     await loadDashboards(context, loaderOptions);
 
     expect(refreshList).toHaveBeenCalledWith({
-      limit: 50,
       boardFace: "dashboard",
       archivedFilter: "all",
       force: true,
     });
     expect(listSnapshot).toHaveBeenLastCalledWith({
-      limit: 50,
       boardFace: "dashboard",
       archivedFilter: "all",
     });

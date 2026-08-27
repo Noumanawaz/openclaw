@@ -871,7 +871,7 @@ describe("createSessionCapability", () => {
     await sessions.refresh({ force: true });
     expect(request).toHaveBeenCalledWith(
       "sessions.list",
-      expect.objectContaining({ configuredAgentsOnly: true, limit: 50 }),
+      expect.not.objectContaining({ limit: expect.anything() }),
     );
     const publishedKeys: string[][] = [];
     sessions.subscribe((next) => {

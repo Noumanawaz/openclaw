@@ -1,4 +1,3 @@
-import { SESSIONS_LIST_OWNER_LIMIT } from "../../../../src/shared/session-list-limits.ts";
 import type { GatewaySessionRow, SessionsListResult } from "../../api/types.ts";
 import { formatUiError } from "../format-error.ts";
 import { createSessionEventRefreshCoordinator } from "./event-refresh-coordinator.ts";
@@ -21,7 +20,6 @@ import {
 } from "./session-key.ts";
 import {
   buildSessionListParams,
-  DEFAULT_SESSION_LIST_QUERY,
   requestSessionList,
   requestSessionListParams,
 } from "./session-requests.ts";
@@ -51,12 +49,16 @@ type ManagedSessionListRefresh = {
   invalidated?: true;
 };
 
-type ManagedSessionListQuery = Readonly<Record<string, unknown>> & { readonly limit: number };
+/** `limit: undefined` is an unbounded roster: it already holds every row, so it
+ *  needs no retained window and never appends. */
+type ManagedSessionListQuery = Readonly<Record<string, unknown>> & {
+  readonly limit: number | undefined;
+};
 
 type ManagedSessionList = {
   key: string;
   query: ManagedSessionListQuery;
-  retainedLimit: number;
+  retainedLimit: number | undefined;
   connectionEpoch: number | null;
   snapshot: SessionListSnapshot;
   listeners: Set<(snapshot: SessionListSnapshot) => void>;
@@ -68,9 +70,7 @@ type ManagedSessionList = {
 function normalizeManagedSessionListQuery(options: SessionListOptions): ManagedSessionListQuery {
   const { offset: _offset, append: _append, ...queryOptions } = options;
   const limit =
-    typeof options.limit === "number" && options.limit > 0
-      ? Math.floor(options.limit)
-      : DEFAULT_SESSION_LIST_QUERY.limit;
+    typeof options.limit === "number" && options.limit > 0 ? Math.floor(options.limit) : undefined;
   return Object.freeze({ ...buildSessionListParams({ ...queryOptions, limit }), limit });
 }
 
@@ -142,10 +142,11 @@ function retainSessionPaginationWindow(
       ? offset + result.sessions.length
       : nextResult.sessions.length;
   // Retain the shared pagination window, excluding owner rows merged ahead of it.
-  return {
-    ...options,
-    limit: Math.max(options.limit ?? DEFAULT_SESSION_LIST_QUERY.limit, retainedListLimit),
-  };
+  // An unbounded roster already holds every row, so it has no window to retain.
+  if (options.limit === undefined) {
+    return options;
+  }
+  return { ...options, limit: Math.max(options.limit, retainedListLimit) };
 }
 
 export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
@@ -215,9 +216,10 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
     const drain = async () => {
       let next: ManagedSessionListRefresh | null = refresh;
       while (next && isCurrent()) {
+        const windowLimit = next.append ? entry.query.limit : entry.retainedLimit;
         const requestParams = {
           ...entry.query,
-          limit: next.append ? entry.query.limit : entry.retainedLimit,
+          ...(windowLimit === undefined ? {} : { limit: windowLimit }),
           ...(next.append && next.offset !== undefined ? { offset: next.offset } : {}),
         };
         publishManagedList(entry, { ...entry.snapshot, loading: true, error: null });
@@ -232,7 +234,7 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
               ? appendSessionResults(previous, result)
               : reconcileRosterPresentationMetadata(result, previous);
           const decorated = host.decorate(nextResult);
-          if (decorated) {
+          if (decorated && entry.retainedLimit !== undefined) {
             entry.retainedLimit = Math.max(entry.retainedLimit, decorated.sessions.length);
           }
           entry.connectionEpoch = scope.epoch;
@@ -417,17 +419,7 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
     ) {
       return options;
     }
-    const limit = Math.max(
-      SESSIONS_LIST_OWNER_LIMIT,
-      typeof options.limit === "number" && options.limit > 0
-        ? Math.floor(options.limit)
-        : DEFAULT_SESSION_LIST_QUERY.limit,
-    );
-    return {
-      ...options,
-      ownerFirst: true,
-      limit,
-    };
+    return { ...options, ownerFirst: true };
   };
 
   const drainRefreshQueue = async (options: SessionRefreshOptions, bootstrap: boolean) => {

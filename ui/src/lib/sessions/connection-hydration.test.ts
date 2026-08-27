@@ -180,11 +180,13 @@ describe("session connection hydration", () => {
         expect.objectContaining({
           agentId: "main",
           ownerFirst: true,
-          limit: 60,
         }),
         { timeoutMs: DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS },
       ),
     );
+    expect(
+      request.mock.calls.find(([method]) => method === "sessions.subscribe")?.[1],
+    ).not.toHaveProperty("limit");
     expect(request.mock.calls.filter(([method]) => method === "sessions.list")).toHaveLength(0);
     expect(sessions.state.result).toBeNull();
     const queuedRefresh = sessions.refresh({ agentId: "other", search: "queued", force: true });
@@ -324,7 +326,7 @@ describe("session connection hydration", () => {
         .map(([, params]) => params),
     ).toEqual([
       expect.not.objectContaining({ ownerFirst: expect.anything() }),
-      expect.objectContaining({ ownerFirst: true, limit: 60 }),
+      expect.objectContaining({ ownerFirst: true }),
     ]);
     expect(sessions.state.result?.sessions).toEqual([]);
     expect(sessions.state.agentId).toBe("main");

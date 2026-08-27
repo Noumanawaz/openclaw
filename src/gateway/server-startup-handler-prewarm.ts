@@ -3,7 +3,6 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { getActiveGatewayRootWorkCount } from "../process/gateway-work-admission.js";
 import { scheduleGatewayIdleTask, type GatewayIdleTaskHandle } from "./server-idle-task.js";
 
-const SIDEBAR_SESSION_LIST_LIMIT = 60;
 const SIDEBAR_PREWARM_MAX_SESSION_ENTRIES = 2_000;
 const GATEWAY_HANDLER_PREWARM_RETRY_DELAY_MS = 250;
 
@@ -41,7 +40,6 @@ async function prewarmGatewaySessionListData(cfg: OpenClawConfig, agentId: strin
       includeDerivedTitles: true,
       includeGlobal: true,
       includeUnknown: true,
-      limit: SIDEBAR_SESSION_LIST_LIMIT,
     },
   });
 }

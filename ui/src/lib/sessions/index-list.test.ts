@@ -93,7 +93,6 @@ describe("session list requests", () => {
       boardFace: "dashboard",
       includeGlobal: true,
       includeUnknown: true,
-      limit: 50,
     });
     sessions.dispose();
   });

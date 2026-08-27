@@ -98,7 +98,7 @@ describe("DashboardsPage", () => {
     await element.updateComplete;
 
     expect(subscribeList).toHaveBeenCalledWith(
-      { limit: 50, boardFace: "dashboard", archivedFilter: "all" },
+      { boardFace: "dashboard", archivedFilter: "all" },
       expect.any(Function),
     );
     expect(refreshList).not.toHaveBeenCalled();
@@ -108,7 +108,6 @@ describe("DashboardsPage", () => {
     selectionListeners.forEach((listener) => listener());
     await vi.waitFor(() => expect(refreshList).toHaveBeenCalledTimes(1));
     expect(refreshList).toHaveBeenCalledWith({
-      limit: 50,
       boardFace: "dashboard",
       archivedFilter: "all",
       agentId: "writer",
@@ -146,7 +145,6 @@ describe("DashboardsPage", () => {
     element.querySelector<HTMLButtonElement>('[role="alert"] button')?.click();
     expect(refreshList).toHaveBeenCalledOnce();
     expect(refreshList).toHaveBeenLastCalledWith({
-      limit: 50,
       boardFace: "dashboard",
       archivedFilter: "all",
       agentId: "writer",

@@ -24,10 +24,14 @@ import type {
   SessionResetOptions,
 } from "./session-capability.ts";
 
-/** Gateway rosters omit recency so Chat and Settings agree; the cap bounds list work. */
-export const DEFAULT_SESSION_LIST_QUERY = {
-  limit: 50,
-} as const satisfies SessionListOptions;
+/** Gateway rosters omit recency so Chat and Settings agree, and omit `limit` so
+ *  every session reaches the sidebar: a truncated roster silently empties whole
+ *  categories whose newest session falls outside the page. */
+export const DEFAULT_SESSION_LIST_QUERY = {} as const satisfies SessionListOptions;
+
+/** Starting page size for the Sessions page's explicit, user-editable limit
+ *  field. Rosters stay unbounded; only this operator-chosen control paginates. */
+export const SESSIONS_PAGE_DEFAULT_LIMIT = 50;
 
 const SESSION_LIST_PARAMS = {
   includeGlobal: true,
@@ -61,9 +65,7 @@ function buildTranscriptMutationParams(
 
 export function buildSessionListParams(options: SessionListOptions = {}): Record<string, unknown> {
   const params: Record<string, unknown> = { ...SESSION_LIST_PARAMS };
-  if (options.limit === undefined) {
-    params.limit = DEFAULT_SESSION_LIST_QUERY.limit;
-  } else if (options.limit > 0) {
+  if (options.limit !== undefined && options.limit > 0) {
     params.limit = Math.floor(options.limit);
   }
   if (options.includeGlobal !== undefined) {

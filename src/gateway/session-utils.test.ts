@@ -550,7 +550,7 @@ describe("gateway session utils", () => {
     expect(buildGatewaySessionEventFields({ sessionRow: row }).observerDigest).toBeNull();
   });
 
-  test("session lists apply a bounded default and expose truncation metadata", async () => {
+  test("session lists return every row when the caller sets no limit", async () => {
     const cfg = createModelDefaultsConfig({ primary: "openai/gpt-5.4" });
     const store = Object.fromEntries(
       Array.from({ length: 101 }, (_value, index) => [
@@ -571,14 +571,16 @@ describe("gateway session utils", () => {
       opts: {},
     });
 
-    expect(listed.sessions).toHaveLength(100);
-    expect(listed.count).toBe(100);
+    // A truncated roster silently empties sidebar categories whose newest
+    // session falls outside the page, so an unset limit must hold everything.
+    expect(listed.sessions).toHaveLength(101);
+    expect(listed.count).toBe(101);
     expect(listed.totalCount).toBe(101);
-    expect(listed.limitApplied).toBe(100);
-    expect(listed.nextOffset).toBe(100);
-    expect(listed.hasMore).toBe(true);
+    expect(listed.limitApplied).toBeUndefined();
+    expect(listed.nextOffset).toBeNull();
+    expect(listed.hasMore).toBe(false);
     expect(listed.sessions[0]?.key).toBe("session-0");
-    expect(listed.sessions.at(-1)?.key).toBe("session-99");
+    expect(listed.sessions.at(-1)?.key).toBe("session-100");
   });
 
   test("session lists honor explicit caller limits", () => {
