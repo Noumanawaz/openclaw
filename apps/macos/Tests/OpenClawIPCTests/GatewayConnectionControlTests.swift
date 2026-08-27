@@ -677,7 +677,7 @@ private func assertConfigLookupCannotRecreateRoute(
             tls: firstTLS,
             routeAuthority: nil,
             revision: 1))
-        let connection = GatewayConnection(endpointProvider: { source.snapshot() })
+        let connection = GatewayConnection(testEndpointProvider: { source.snapshot() })
 
         try await connection.refresh()
         let firstGeneration = await connection._test_routeGeneration()
@@ -1206,6 +1206,7 @@ private func assertConfigLookupCannotRecreateRoute(
                     routeAuthority: nil,
                     deviceAuthGatewayID: route.owner)
             },
+            activationBindingKeyProvider: { nil },
             sessionBox: WebSocketSessionBox(session: session))
         _ = try await connection.request(
             method: "health",

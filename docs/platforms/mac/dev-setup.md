@@ -28,8 +28,9 @@ pnpm install
 ./scripts/package-mac-app.sh
 ```
 
-Outputs `dist/OpenClaw.app`. Without an Apple Developer ID certificate, the
-script falls back to ad-hoc signing.
+Outputs `dist/OpenClaw.app`. Signing requires a valid code-signing identity by
+default. For explicit ad-hoc development options and their TCC limitations, see
+[macOS signing](/platforms/mac/signing).
 
 Set `OPENCLAW_SKIP_MLX_TTS=1` to package a dev/proof build without the local
 MLX voice helper. This skips the `openclaw-mlx-tts` binary and its large
