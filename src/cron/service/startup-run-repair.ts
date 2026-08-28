@@ -22,7 +22,6 @@ export type InterruptedStartupRun = {
   taskRunId?: string;
   runAtMs: number;
   durationMs: number;
-  replacementAtMs?: number;
 };
 
 function resolveOneShotReplacementAtMs(job: CronJob, runningAtMs: number): number | undefined {
@@ -47,7 +46,6 @@ export function markInterruptedStartupRun(params: {
   deferredNotifications?: DeferredCronNotifications;
 }): InterruptedStartupRun {
   const { job, runningAtMs, nowMs } = params;
-  const replacementAtMs = resolveOneShotReplacementAtMs(job, runningAtMs);
   // A persisted running marker means the gateway stopped mid-run; mark it as a
   // normal failed run so retries, alerts, and run logs all see one outcome.
   const previousErrors =
@@ -75,7 +73,7 @@ export function markInterruptedStartupRun(params: {
   job.state.lastFailureNotificationDelivered = undefined;
   job.state.lastFailureNotificationDeliveryStatus = "not-requested";
   job.state.lastFailureNotificationDeliveryError = undefined;
-  job.state.nextRunAtMs = replacementAtMs;
+  job.state.nextRunAtMs = undefined;
   job.updatedAtMs = nowMs;
 
   const alertConfig = resolveFailureAlert(params.state, job);
@@ -104,14 +102,9 @@ export function markInterruptedStartupRun(params: {
     deferredNotifications: params.deferredNotifications,
   });
 
-  if (job.schedule.kind === "at" && replacementAtMs === undefined) {
-    job.enabled = false;
-  }
-
   return {
     jobId: job.id,
     ...(params.taskRunId ? { taskRunId: params.taskRunId } : {}),
-    ...(replacementAtMs === undefined ? {} : { replacementAtMs }),
     runAtMs: runningAtMs,
     durationMs: job.state.lastDurationMs,
   };
@@ -138,6 +131,7 @@ export function restoreFinalizedStartupRun(params: {
   }
   const replacementAtMs = resolveOneShotReplacementAtMs(job, startedAt);
   const scheduleOwnership = replacementAtMs === undefined ? "current" : "stale";
+  job.state.startupCatchupAtMs = undefined;
   if (params.triggerEval?.fired === false) {
     applyTriggerNoFireResult(
       state,

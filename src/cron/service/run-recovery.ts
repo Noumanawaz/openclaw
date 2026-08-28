@@ -168,7 +168,6 @@ function repairInDatabase(params: {
         nowMs,
         deferredNotifications: notifications,
       });
-      replacementAtMs = interrupted.replacementAtMs;
       if (job.enabled && job.state.nextRunAtMs === undefined) {
         recomputeJobNextRunAtMs({
           state,
@@ -176,6 +175,11 @@ function repairInDatabase(params: {
           nowMs,
           deferredNotifications: notifications,
         });
+      }
+      if (job.schedule.kind === "at") {
+        // Commit the pending occurrence with receipt retirement, so another
+        // restart before admission cannot consume it as terminal run history.
+        job.state.startupCatchupAtMs = job.state.nextRunAtMs;
       }
     }
     if (proposal.receipt) {
@@ -224,7 +228,9 @@ function repairInDatabase(params: {
     kind: "repaired",
     ...(interrupted ? { interrupted } : {}),
     notifications,
-    ...(replacementAtMs === undefined && proposal.runningAtMs !== undefined
+    ...(replacementAtMs === undefined &&
+    proposal.runningAtMs !== undefined &&
+    !(interrupted && job.schedule.kind === "at")
       ? { skipStartupCatchup: true }
       : {}),
   };
