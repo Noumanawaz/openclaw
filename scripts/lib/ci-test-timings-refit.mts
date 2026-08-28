@@ -8,6 +8,7 @@ export type CiTimingRun = {
 };
 
 type Samples = Map<string, number[]>;
+const MIN_PRUNE_RUNS = 3;
 
 function median(values: number[]): number {
   const sorted = values.toSorted((a, b) => a - b);
@@ -78,9 +79,11 @@ function readCompactLog(
   }
 }
 
-function refitMap(samples: Samples, previous: Record<string, number> = {}, prune = false) {
+function refitMap(samples: Samples, previous: Record<string, number> = {}, contributingRuns = 0) {
   const next = Object.fromEntries(
-    Object.entries(previous).filter(([key]) => !prune || samples.has(key)),
+    Object.entries(previous).filter(
+      ([key]) => contributingRuns < MIN_PRUNE_RUNS || samples.has(key),
+    ),
   );
   for (const [key, values] of samples) {
     const center = median(values);
@@ -106,6 +109,11 @@ export function refitTestTimings(runs: CiTimingRun[], previous?: CiTestTimings) 
     blacksmith: new Map<string, number[]>(),
     github: new Map<string, number[]>(),
   };
+  const contributingRuns = {
+    uiE2e: new Set<number>(),
+    blacksmith: new Set<number>(),
+    github: new Set<number>(),
+  };
   const overhead: number[] = [];
   for (const run of runs) {
     const current = {
@@ -123,6 +131,10 @@ export function refitTestTimings(runs: CiTimingRun[], previous?: CiTestTimings) 
     }
     // Retries or duplicate reporter lines in one run must not satisfy the two-run minimum.
     for (const profile of ["uiE2e", "blacksmith", "github"] as const) {
+      // Missing or unparseable profile logs are not evidence that its keys disappeared.
+      if (current[profile].size > 0) {
+        contributingRuns[profile].add(run.id);
+      }
       for (const [key, values] of current[profile]) {
         recordSample(samples[profile], key, median(values));
       }
@@ -136,15 +148,26 @@ export function refitTestTimings(runs: CiTimingRun[], previous?: CiTestTimings) 
     measuredOverhead === undefined ||
     (oldOverhead !== undefined && Math.abs(measuredOverhead - oldOverhead) <= oldOverhead * 0.15);
   const runIds = [...new Set(runs.map((run) => run.id))].toSorted((a, b) => a - b);
-  const prune = runIds.length >= 3;
   const timings: CiTestTimings = {
     compactGroupSeconds: {
-      blacksmith: refitMap(samples.blacksmith, previous?.compactGroupSeconds.blacksmith, prune),
-      github: refitMap(samples.github, previous?.compactGroupSeconds.github, prune),
+      blacksmith: refitMap(
+        samples.blacksmith,
+        previous?.compactGroupSeconds.blacksmith,
+        contributingRuns.blacksmith.size,
+      ),
+      github: refitMap(
+        samples.github,
+        previous?.compactGroupSeconds.github,
+        contributingRuns.github.size,
+      ),
     },
     source: `median of ${runIds.length} successful main CI runs: ${runIds.join(", ")}`,
     uiE2e: {
-      fileSeconds: refitMap(samples.uiE2e, previous?.uiE2e.fileSeconds, prune),
+      fileSeconds: refitMap(
+        samples.uiE2e,
+        previous?.uiE2e.fileSeconds,
+        contributingRuns.uiE2e.size,
+      ),
       perFileOverheadSeconds: keepOverhead
         ? (oldOverhead ?? 0)
         : Math.round(measuredOverhead * 10) / 10,

@@ -189,8 +189,11 @@ write elsewhere, or `--dry-run` to print changed entries without writing.
 Measurements come only from successful UI E2E and compact jobs; compact groups
 also require an `exit 0` marker. Each entry needs at least two run samples;
 multiple attempts within one run still contribute only one sample per key and
-profile. Keys absent from every sampled run are pruned only when at least three
-runs were sampled, with explicit removals in the dry-run and PR change tables.
+profile. Keys are pruned only when that profile has at least one observation in
+each of at least three sampled runs, and only if the key is absent from every
+contributing run. Profiles with fewer contributing runs retain all previous
+keys; missing or unparseable logs do not count toward the threshold. Removals
+remain explicit in the dry-run and PR change tables.
 Samples above 2.5 times the key's median are discarded before taking the median,
 and existing weights stay unchanged when the new median is within 15%. UI E2E
 overhead is the median shard `(wall - body) / fileCount`, clamped to 0–5 seconds.
@@ -199,8 +202,10 @@ An empty `compactGroupSeconds.github` map is designed cold-start behavior:
 main compact jobs normally run on Blacksmith, so the hosted profile keeps its
 in-source `COMPACT_GITHUB_GROUP_SECONDS_HINTS` fallback until hosted observations
 meet the sampling minimum. Later main attempts on the hybrid backend, or main
-runs using `OPENCLAW_CI_RUNNER_BACKEND=github`, can fill it naturally. Sampling
-stays main-only; fork PR timings never influence the packer.
+runs using `OPENCLAW_CI_RUNNER_BACKEND=github`, can fill it naturally. Once recorded,
+hosted weights survive all-Blacksmith windows: pruning requires observations
+from at least three hosted runs in the sampled window. Sampling stays main-only;
+fork PR timings never influence the packer.
 
 The `CI Test Timings Refit` workflow runs daily at 09:43 UTC and supports manual
 dispatch on `main`. When weights change, it updates the single

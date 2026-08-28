@@ -27,11 +27,11 @@ function timingRun(id: number, logs: CiTimingRun["logs"]): CiTimingRun {
   return { id, createdAt: `2026-08-${String(20 + id).padStart(2, "0")}T23:00:00Z`, logs };
 }
 
-function compactLog(seconds: number) {
+function compactLog(seconds: number, key = "core-unit-src-security-2") {
   const end = new Date(Date.parse("2026-08-27T23:00:00Z") + seconds * 1000).toISOString();
   return [
-    "2026-08-27T23:00:00.0000000Z [shard:core-unit-src-security-2] begin",
-    `${end} [shard:core-unit-src-security-2] end (exit 0)`,
+    `2026-08-27T23:00:00.0000000Z [shard:${key}] begin`,
+    `${end} [shard:${key}] end (exit 0)`,
     "2026-08-27T23:00:00Z [shard:failed] begin",
     `${end} [shard:failed] end (exit 1)`,
     "2026-08-27T23:00:00Z [shard:unfinished] begin",
@@ -94,43 +94,95 @@ describe("CI test timing refit", () => {
   });
 
   it.each([0, 1, 2, 3])(
-    "prunes absent keys only after at least three sampled runs (%s)",
+    "prunes absent keys only after at least three contributing runs per profile (%s)",
     (count) => {
       const previous: CiTestTimings = {
         ...baseline,
-        compactGroupSeconds: { blacksmith: { deleted: 30 }, github: { deleted: 40 } },
+        compactGroupSeconds: {
+          blacksmith: { observed: 20, deleted: 30 },
+          github: { observed: 20, deleted: 40 },
+        },
+        uiE2e: {
+          ...baseline.uiE2e,
+          fileSeconds: { ...baseline.uiE2e.fileSeconds, "deleted.e2e.test.ts": 50 },
+        },
       };
-      const runs = Array.from({ length: count }, (_, index) => timingRun(index + 1, []));
+      const runs = [1, 2, 3].map((id) => {
+        const logs: CiTimingRun["logs"] = [
+          {
+            kind: "compact",
+            labels: ["blacksmith-4vcpu-ubuntu-2404"],
+            text: compactLog(20, "observed"),
+          },
+        ];
+        if (id <= count) {
+          logs.push(
+            { kind: "compact", labels: ["ubuntu-24.04"], text: compactLog(20, "observed") },
+            { kind: "uiE2e", text: uiLog({ [measuredFile]: 100 }) },
+          );
+        }
+        return timingRun(id, logs);
+      });
       const { timings, changes } = refitTestTimings(runs, previous);
-      expect(timings.uiE2e.fileSeconds).toEqual(count >= 3 ? {} : previous.uiE2e.fileSeconds);
-      expect(timings.compactGroupSeconds).toEqual(
-        count >= 3 ? { blacksmith: {}, github: {} } : previous.compactGroupSeconds,
+      expect(timings.compactGroupSeconds.blacksmith).toEqual({ observed: 20 });
+      expect(timings.compactGroupSeconds.github).toEqual(
+        count >= 3 ? { observed: 20 } : previous.compactGroupSeconds.github,
+      );
+      expect(timings.uiE2e.fileSeconds).toEqual(
+        count >= 3 ? { [measuredFile]: 100 } : previous.uiE2e.fileSeconds,
       );
       expect(changes).toEqual(
         count >= 3
           ? [
               { key: "compactGroupSeconds.blacksmith.deleted", old: 30, next: undefined },
               { key: "compactGroupSeconds.github.deleted", old: 40, next: undefined },
-              { key: `uiE2e.fileSeconds.${measuredFile}`, old: 100, next: undefined },
+              { key: "uiE2e.fileSeconds.deleted.e2e.test.ts", old: 50, next: undefined },
             ]
-          : [],
+          : [{ key: "compactGroupSeconds.blacksmith.deleted", old: 30, next: undefined }],
       );
     },
   );
 
+  it.each(["missing", "unparseable"])(
+    "preserves all profiles when three sampled runs have %s logs",
+    (logs) => {
+      const previous: CiTestTimings = {
+        ...baseline,
+        compactGroupSeconds: { blacksmith: { group: 50 }, github: { g1: 181, g2: 90 } },
+      };
+      const runs = [1, 2, 3].map((id) =>
+        timingRun(
+          id,
+          logs === "missing" ? [] : [{ kind: "uiE2e", text: "No test results available" }],
+        ),
+      );
+      expect(refitTestTimings(runs, previous)).toMatchObject({ timings: previous, changes: [] });
+    },
+  );
+
   it.each([1, 2])("keeps keys observed in %s of three runs", (observedRuns) => {
+    const otherFile = "ui/src/e2e/other.e2e.test.ts";
     const previous: CiTestTimings = {
       ...baseline,
+      uiE2e: { ...baseline.uiE2e, fileSeconds: { [measuredFile]: 100, [otherFile]: 100 } },
       compactGroupSeconds: {
-        blacksmith: { "core-unit-src-security-2": 30 },
-        github: { "core-unit-src-security-2": 30 },
+        blacksmith: { "core-unit-src-security-2": 30, other: 30 },
+        github: { "core-unit-src-security-2": 30, other: 30 },
       },
     };
     const runs = [1, 2, 3].map((id) =>
       timingRun(
         id,
         id > observedRuns
-          ? []
+          ? [
+              { kind: "uiE2e", text: uiLog({ [otherFile]: 100 }) },
+              {
+                kind: "compact",
+                labels: ["blacksmith-4vcpu-ubuntu-2404"],
+                text: compactLog(30, "other"),
+              },
+              { kind: "compact", labels: ["ubuntu-24.04"], text: compactLog(30, "other") },
+            ]
           : [
               { kind: "uiE2e", text: uiLog({ [measuredFile]: 100 }) },
               { kind: "compact", labels: ["blacksmith-4vcpu-ubuntu-2404"], text: compactLog(30) },

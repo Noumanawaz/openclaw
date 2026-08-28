@@ -61,7 +61,7 @@ jobs:
 
           ## Why This Change Was Made
 
-          The daily refit uses medians, rejects outliers and single samples, and keeps existing weights when the new median is within 15% of them. Keys absent from every sampled run are removed only after at least three runs; the table below lists each removal explicitly.
+          The daily refit uses medians, rejects outliers and single samples, and keeps existing weights when the new median is within 15% of them. Keys absent from every contributing run are removed only when their profile has observations from at least three sampled runs; the table below lists each removal explicitly.
 
           ## User Impact
 
