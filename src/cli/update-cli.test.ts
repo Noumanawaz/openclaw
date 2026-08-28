@@ -8,6 +8,7 @@ import { expectDefined } from "@openclaw/normalization-core";
 import { Command } from "commander";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { writePackageDistInventory } from "../../scripts/lib/package-dist-inventory.ts";
+import { createDeferred } from "../../test/helpers/promise.js";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import type { OpenClawConfig, ConfigFileSnapshot } from "../config/types.openclaw.js";
 import type { PluginInstallRecord } from "../config/types.plugins.js";
@@ -2418,18 +2419,38 @@ describe("update-cli", () => {
     expect(stderrPipe).toHaveBeenCalledWith(process.stderr);
   });
 
-  it("finishes package updates when the post-core process writes a result but keeps handles open", async () => {
+  it("stops a post-core process with open handles only once when result reads overlap", async () => {
     setupUpdatedRootRefresh();
     const kill = vi.fn();
+    let resultPath: string | undefined;
+    const readsReady = createDeferred();
+    const releaseReads = createDeferred();
+    const jsonFiles = await import("../infra/json-files.js");
+    const readJsonIfExists = jsonFiles.readJsonIfExists;
+    const pendingReads: Promise<unknown>[] = [];
+    let resultReads = 0;
+    const readSpy = vi
+      .spyOn(jsonFiles, "readJsonIfExists")
+      .mockImplementation(<T>(...args: Parameters<typeof readJsonIfExists>) => {
+        const read = readJsonIfExists<T>(...args).then(async (result) => {
+          if (args[0] === resultPath) {
+            if (++resultReads === 2) {
+              readsReady.resolve();
+            }
+            await releaseReads.promise;
+          }
+          return result;
+        });
+        pendingReads.push(read);
+        return read;
+      });
     spawn.mockImplementationOnce((_command: unknown, _argv: unknown, options: unknown) => {
-      const resultPath = (options as { env?: NodeJS.ProcessEnv }).env
+      resultPath = (options as { env?: NodeJS.ProcessEnv }).env
         ?.OPENCLAW_UPDATE_POST_CORE_RESULT_PATH;
       if (!resultPath) {
         throw new Error("missing post-core result path");
       }
-      queueMicrotask(() => {
-        void fs.writeFile(resultPath, `${JSON.stringify({ status: "ok" })}\n`, "utf-8");
-      });
+      fsSync.writeFileSync(resultPath, `${JSON.stringify({ status: "ok" })}\n`, "utf-8");
       const child = new EventEmitter() as EventEmitter & {
         kill: typeof kill;
         once: EventEmitter["once"];
@@ -2438,11 +2459,26 @@ describe("update-cli", () => {
       return child;
     });
 
-    await updateCommand({ yes: true, restart: false });
+    const updating = updateCommand({ yes: true, restart: false });
+    try {
+      await Promise.race([
+        readsReady.promise,
+        updating.then(() => {
+          throw new Error("update finished before overlapping result reads");
+        }),
+      ]);
+      releaseReads.resolve();
+      await updating;
+      await Promise.all(pendingReads);
 
-    expect(kill).toHaveBeenCalledTimes(1);
-    expect(updateNpmInstalledPlugins).not.toHaveBeenCalled();
-    expect(defaultRuntime.exit).not.toHaveBeenCalledWith(1);
+      expect(kill).toHaveBeenCalledTimes(1);
+      expect(updateNpmInstalledPlugins).not.toHaveBeenCalled();
+      expect(defaultRuntime.exit).not.toHaveBeenCalledWith(1);
+    } finally {
+      releaseReads.resolve();
+      await Promise.allSettled([updating, ...pendingReads]);
+      readSpy.mockRestore();
+    }
   });
 
   it("does not restart a stopped managed gateway after post-core plugin errors", async () => {

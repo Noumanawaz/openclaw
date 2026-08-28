@@ -546,13 +546,8 @@ describe("runDaemonInstall integration", () => {
   });
 
   it.each([
-    { name: "system-owned definition", kind: "sealed", force: false },
-    {
-      name: "custom marker-owned openclaw.service system definition",
-      kind: "sealed",
-      force: false,
-    },
-    { name: "dueling user and system definitions", kind: "sealed", force: true },
+    { name: "sealed definition without force", kind: "sealed", force: false },
+    { name: "sealed definition with force", kind: "sealed", force: true },
     { name: "uninspectable definition", kind: "unknown", force: true },
     { name: "rejected definition inspection", kind: "rejected", force: false },
   ])("leaves absent config and state untouched for $name", async ({ kind, force }) => {

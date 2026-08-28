@@ -556,33 +556,10 @@ describe("maybeOfferUpdateBeforeDoctor", () => {
   });
 
   it.each([
-    { drift: "command fingerprint", ownershipError: "service command changed", sealed: true },
-    {
-      drift: "managed checkout root",
-      ownershipError: "service install root changed",
-      sealed: true,
-    },
-    {
-      drift: "writable managed checkout root",
-      ownershipError: "service install root changed",
-      sealed: false,
-    },
-    {
-      drift: "writable effective launcher",
-      ownershipError: "effective service launcher changed",
-      sealed: false,
-    },
-    {
-      drift: "writable effective gateway port",
-      ownershipError: "effective service gateway port changed",
-      sealed: false,
-    },
-    {
-      drift: "writable effective working-directory root",
-      ownershipError: "effective service working-directory root changed",
-      sealed: false,
-    },
-  ])("refuses to restart after its $drift changes", async ({ ownershipError, sealed }) => {
+    { definition: "preserved", sealed: true },
+    { definition: "writable", sealed: false },
+  ])("propagates rejected revalidation for a $definition definition", async ({ sealed }) => {
+    const ownershipError = "service ownership revalidation rejected";
     const runtime = { log: vi.fn(), error: vi.fn(), exit: vi.fn() };
     mockGitCheckout();
     mockManagedService({

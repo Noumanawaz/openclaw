@@ -122,15 +122,23 @@ describe("system systemd ownership", () => {
   });
 
   it("shares one timeout budget across system-manager ownership probes", async () => {
-    await expect(
-      assertNoSystemSystemdOwnership("openclaw-gateway.service", 50),
-    ).resolves.toBeUndefined();
-    for (const call of execFileUtf8.mock.calls) {
-      expect(call[2]).toEqual(
-        expect.objectContaining({ timeout: expect.any(Number), killSignal: "SIGKILL" }),
-      );
-      expect(call[2]?.timeout).toBeGreaterThan(0);
-      expect(call[2]?.timeout).toBeLessThanOrEqual(50);
+    let now = 1_000;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    execFileUtf8.mockImplementation(async (_command, args) => {
+      now += 20;
+      return args.includes("--property=UnitPath") ? state.managerUnitPath : state.systemctl;
+    });
+    try {
+      await expect(
+        assertNoSystemSystemdOwnership("openclaw-gateway.service", 50),
+      ).resolves.toBeUndefined();
+      expect(execFileUtf8.mock.calls.map((call) => call[2])).toEqual([
+        { timeout: 50, killSignal: "SIGKILL" },
+        { timeout: 30, killSignal: "SIGKILL" },
+        { timeout: 10, killSignal: "SIGKILL" },
+      ]);
+    } finally {
+      clock.mockRestore();
     }
   });
 

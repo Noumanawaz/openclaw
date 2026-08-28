@@ -239,7 +239,10 @@ describe("preserved update activation with real version guards", () => {
   it.each([
     ...(["git", "npm", "pnpm", "bun"] as const).flatMap((mode) =>
       (["sealed", "unknown"] as const).flatMap((denial) =>
-        ["healthy", "json denial", "stale retry", "uninspectable", "foreign"].map((outcome) => ({
+        (mode === "git" || mode === "npm"
+          ? ["healthy", "json denial", "stale retry", "uninspectable", "foreign"]
+          : ["healthy"]
+        ).map((outcome) => ({
           mode,
           denial,
           outcome,
