@@ -177,7 +177,7 @@ export function restoreFinalizedStartupRun(params: {
       endedAt,
     },
     {
-      replayFailureAlertAtMs: endedAt,
+      replay: true,
       scheduleOwnership,
       deferredNotifications: params.deferredNotifications,
     },
