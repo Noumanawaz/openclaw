@@ -6,6 +6,7 @@ import {
   formatKeyboardShortcutCombo,
   KEYBOARD_SHORTCUT_COMBOS,
 } from "../lib/keyboard-shortcut-contract.ts";
+import { finishElementAnimations } from "../test-helpers/animations.ts";
 import {
   controlUiBundledGatewayUrl,
   installMockGateway,
@@ -129,6 +130,7 @@ async function openPicker(picker: Locator) {
     ),
     picker.click(),
   ]);
+  await picker.locator('wa-popup [part="popup"]').evaluate(finishElementAnimations);
 }
 
 async function selectPickerOption(picker: Locator, value: string) {
@@ -148,6 +150,7 @@ async function clickPickerOption(picker: Locator, value: string) {
     ),
     option.click(),
   ]);
+  await picker.locator('wa-popup [part="popup"]').evaluate(finishElementAnimations);
 }
 
 suite.define(() => {
@@ -208,6 +211,24 @@ suite.define(() => {
     await expect.poll(async () => (await families()).chat).toContain("Lora");
     await selectPickerOption(ui, "system");
     await expect.poll(async () => (await families()).ui).toContain("-apple-system");
+    // Model a popup transition outliving wa-after-show: restoring the theme
+    // must not depend on Chromium advancing the animation timeline.
+    await ui.evaluate((select) => {
+      select.addEventListener(
+        "wa-after-show",
+        () => {
+          const popup = select
+            .shadowRoot!.querySelector("wa-popup")!
+            .shadowRoot!.querySelector<HTMLElement>('[part="popup"]')!;
+          popup.style.transition = "none";
+          popup.style.transform = "translateX(600px)";
+          popup.getBoundingClientRect();
+          popup.style.transition = "transform 60s linear";
+          popup.style.transform = "translateX(0px)";
+        },
+        { once: true },
+      );
+    });
     await selectPickerOption(ui, "theme");
     await selectPickerOption(chat, "theme");
     await expect.poll(families).toEqual(initial);
