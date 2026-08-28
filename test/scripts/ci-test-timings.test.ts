@@ -27,7 +27,7 @@ function timingRun(id: number, logs: CiTimingRun["logs"]): CiTimingRun {
   return { id, createdAt: `2026-08-${String(20 + id).padStart(2, "0")}T23:00:00Z`, logs };
 }
 
-function compactLog(seconds: number, profile: "blacksmith" | "github") {
+function compactLog(seconds: number) {
   const end = new Date(Date.parse("2026-08-27T23:00:00Z") + seconds * 1000).toISOString();
   return [
     "2026-08-27T23:00:00.0000000Z [shard:core-unit-src-security-2] begin",
@@ -36,7 +36,6 @@ function compactLog(seconds: number, profile: "blacksmith" | "github") {
     `${end} [shard:failed] end (exit 1)`,
     "2026-08-27T23:00:00Z [shard:unfinished] begin",
     `${end} [shard:orphan] end (exit 0)`,
-    profile === "blacksmith" ? "2026-08-27T23:05:00Z   BLACKSMITH_RUN_ID: fixture" : "",
   ].join("\n");
 }
 
@@ -75,8 +74,16 @@ describe("CI test timing refit", () => {
   it("buckets successful compact spans by their job runner and excludes failed or incomplete spans", () => {
     const runs = [10, 20, 100].map((value, index) =>
       timingRun(index + 1, [
-        { kind: "compact", text: compactLog(value, "blacksmith") },
-        { kind: "compact", text: compactLog(40 + index * 10, "github") },
+        {
+          kind: "compact",
+          labels: ["self-hosted", `blacksmith-${index === 0 ? 4 : 8}vcpu-ubuntu-2404`],
+          text: compactLog(value),
+        },
+        {
+          kind: "compact",
+          labels: ["ubuntu-24.04"],
+          text: `${compactLog(40 + index * 10)}\nBLACKSMITH_RUN_ID: misleading-log-text`,
+        },
       ]),
     );
 
@@ -84,6 +91,54 @@ describe("CI test timing refit", () => {
       blacksmith: { "core-unit-src-security-2": 15 },
       github: { "core-unit-src-security-2": 50 },
     });
+  });
+
+  it.each([0, 1, 2, 3])(
+    "prunes absent keys only after at least three sampled runs (%s)",
+    (count) => {
+      const previous: CiTestTimings = {
+        ...baseline,
+        compactGroupSeconds: { blacksmith: { deleted: 30 }, github: { deleted: 40 } },
+      };
+      const runs = Array.from({ length: count }, (_, index) => timingRun(index + 1, []));
+      const { timings, changes } = refitTestTimings(runs, previous);
+      expect(timings.uiE2e.fileSeconds).toEqual(count >= 3 ? {} : previous.uiE2e.fileSeconds);
+      expect(timings.compactGroupSeconds).toEqual(
+        count >= 3 ? { blacksmith: {}, github: {} } : previous.compactGroupSeconds,
+      );
+      expect(changes).toEqual(
+        count >= 3
+          ? [
+              { key: "compactGroupSeconds.blacksmith.deleted", old: 30, next: undefined },
+              { key: "compactGroupSeconds.github.deleted", old: 40, next: undefined },
+              { key: `uiE2e.fileSeconds.${measuredFile}`, old: 100, next: undefined },
+            ]
+          : [],
+      );
+    },
+  );
+
+  it.each([1, 2])("keeps keys observed in %s of three runs", (observedRuns) => {
+    const previous: CiTestTimings = {
+      ...baseline,
+      compactGroupSeconds: {
+        blacksmith: { "core-unit-src-security-2": 30 },
+        github: { "core-unit-src-security-2": 30 },
+      },
+    };
+    const runs = [1, 2, 3].map((id) =>
+      timingRun(
+        id,
+        id > observedRuns
+          ? []
+          : [
+              { kind: "uiE2e", text: uiLog({ [measuredFile]: 100 }) },
+              { kind: "compact", labels: ["blacksmith-4vcpu-ubuntu-2404"], text: compactLog(30) },
+              { kind: "compact", labels: ["ubuntu-24.04"], text: compactLog(30) },
+            ],
+      ),
+    );
+    expect(refitTestTimings(runs, previous)).toMatchObject({ timings: previous, changes: [] });
   });
 
   it.each([
@@ -138,7 +193,7 @@ describe("CI test timing refit", () => {
     const files = { "ui/src/e2e/z.e2e.test.ts": 5, "ui/src/e2e/a.e2e.test.ts": 4 };
     const runs = [2, 1].map((id) =>
       timingRun(id, [
-        { kind: "compact", text: compactLog(20, "github") },
+        { kind: "compact", labels: ["ubuntu-24.04"], text: compactLog(20) },
         { kind: "uiE2e", text: uiLog(files) },
       ]),
     );
@@ -150,7 +205,7 @@ describe("CI test timing refit", () => {
           kind: "uiE2e" as const,
           text: uiLog(Object.fromEntries(Object.entries(files).toReversed())),
         },
-        { kind: "compact" as const, text: compactLog(20, "github") },
+        { kind: "compact" as const, labels: ["ubuntu-24.04"], text: compactLog(20) },
       ],
     }));
 
@@ -181,17 +236,27 @@ const args = process.argv.slice(2);
 const endpoint = args[1];
 if (args[0] === "api" && args[1] === "--help") {
   console.log("--allow-escape-sequences");
-} else if (endpoint === "repos/fixture/repo/actions/workflows/ci.yml/runs?branch=main&status=success&per_page=2&page=1") {
+} else if (endpoint === "repos/fixture/repo/actions/workflows/ci.yml/runs?branch=main&status=success&per_page=3&page=1") {
   if (!args.includes("--jq")) process.exit(2);
-  console.log(JSON.stringify([1, 2].map(id => ({id, created_at: "2026-08-27T23:00:00Z", status: "completed", conclusion: "success"}))));
-} else if (endpoint.includes("actions/runs/") && endpoint.includes("/jobs?")) {
+  console.log(JSON.stringify([1, 2, 3].map(id => ({id, created_at: "2026-08-27T23:00:00Z", status: "completed", conclusion: "success"}))));
+} else if (endpoint.includes("actions/runs/") && endpoint.includes("/jobs?filter=all&")) {
+  if (!args.at(-1).includes("labels")) process.exit(2);
   const jobs = endpoint.endsWith("page=1")
     ? [{id: 1, name: "unrelated", conclusion: "success"}, {id: 2, name: "checks-ui-e2e (2/11)", conclusion: "failure"}]
-    : [{id: 3, name: "checks-ui-e2e (1/11)", conclusion: "success"}];
-  console.log(JSON.stringify({ total_count: 3, jobs }));
+    : [{id: 3, name: "checks-ui-e2e (1/11)", conclusion: "success"},
+       {id: 4, name: "checks-node-compact-small (1)", conclusion: "success", labels: ["blacksmith-4vcpu-ubuntu-2404"]},
+       {id: 5, name: "checks-node-compact-small (1)", conclusion: "success", labels: ["ubuntu-24.04"]},
+       {id: 6, name: "checks-node-compact-small (1)", conclusion: "success", labels: ["ubuntu-24.04"]}];
+  console.log(JSON.stringify({ total_count: 6, jobs: jobs.map(job => ({labels: ["ubuntu-24.04"], ...job})) }));
 } else if (endpoint.endsWith("actions/jobs/3/logs")) {
   if (!args.includes("--allow-escape-sequences")) process.exit(2);
   console.log(${JSON.stringify(log)});
+} else if (endpoint.endsWith("actions/jobs/4/logs")) {
+  console.log(${JSON.stringify(compactLog(20))});
+} else if (endpoint.endsWith("actions/jobs/5/logs")) {
+  console.log(${JSON.stringify(compactLog(40))});
+} else if (endpoint.endsWith("actions/jobs/6/logs")) {
+  console.log(${JSON.stringify(compactLog(60))});
 } else {
   console.error("Unexpected gh request", args);
   process.exit(2);
@@ -199,7 +264,14 @@ if (args[0] === "api" && args[1] === "--help") {
 `,
     );
     chmodSync(fakeGh, 0o755);
-    const original = `${JSON.stringify(baseline, null, 2)}\n`;
+    const original = `${JSON.stringify(
+      {
+        ...baseline,
+        compactGroupSeconds: { blacksmith: { deleted: 30 }, github: {} },
+      },
+      null,
+      2,
+    )}\n`;
     writeFileSync(output, original);
     const invoke = (dryRun: boolean) =>
       spawnSync(
@@ -209,7 +281,7 @@ if (args[0] === "api" && args[1] === "--help") {
           "tsx",
           "scripts/ci-refit-test-timings.mts",
           "--runs",
-          "2",
+          "3",
           "--repo",
           "fixture/repo",
           "--out",
@@ -226,14 +298,20 @@ if (args[0] === "api" && args[1] === "--help") {
       const dryRun = invoke(true);
       expect(dryRun.status, dryRun.stderr).toBe(0);
       expect(dryRun.stdout).toContain(`| uiE2e.fileSeconds.${measuredFile} | 100 | 130 | 30.0% |`);
-      expect(dryRun.stdout).toContain("Sampled successful main CI runs: 1, 2");
+      expect(dryRun.stdout).toContain(
+        "| compactGroupSeconds.blacksmith.deleted | 30 | — | removed |",
+      );
+      expect(dryRun.stdout).toContain("Sampled successful main CI runs: 1, 2, 3");
       expect(readFileSync(output, "utf8")).toBe(original);
       const write = invoke(false);
       expect(write.status, write.stderr).toBe(0);
       const updated = readFileSync(output, "utf8");
-      expect(ciTestTimingsSchema.parse(JSON.parse(updated)).uiE2e.fileSeconds[measuredFile]).toBe(
-        130,
-      );
+      const timings = ciTestTimingsSchema.parse(JSON.parse(updated));
+      expect(timings.uiE2e.fileSeconds[measuredFile]).toBe(130);
+      expect(timings.compactGroupSeconds).toEqual({
+        blacksmith: { "core-unit-src-security-2": 20 },
+        github: { "core-unit-src-security-2": 50 },
+      });
       expect(updated.endsWith("\n")).toBe(true);
       const unchanged = invoke(false);
       expect(unchanged.status, unchanged.stderr).toBe(0);

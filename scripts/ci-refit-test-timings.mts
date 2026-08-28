@@ -18,6 +18,7 @@ const jobPageSchema = z.object({
       id: z.number().int().positive(),
       name: z.string(),
       conclusion: z.string().nullable(),
+      labels: z.array(z.string()),
     }),
   ),
 });
@@ -106,9 +107,9 @@ async function main() {
         JSON.parse(
           await readGh([
             "api",
-            `repos/${repo}/actions/runs/${run.id}/jobs?filter=latest&per_page=100&page=${page}`,
+            `repos/${repo}/actions/runs/${run.id}/jobs?filter=all&per_page=100&page=${page}`,
             "--jq",
-            "{total_count, jobs: [.jobs[] | {id, name, conclusion}]}",
+            "{total_count, jobs: [.jobs[] | {id, name, conclusion, labels}]}",
           ]),
         ),
       );
@@ -125,6 +126,7 @@ async function main() {
           console.error(`[ci-timings] ${run.id}: ${job.name}`);
           logs.push({
             kind,
+            labels: job.labels,
             text: await readGh(["api", `repos/${repo}/actions/jobs/${job.id}/logs`, ...logFlags]),
           });
         }
@@ -159,10 +161,12 @@ async function main() {
   console.log("| Key | Old seconds | New seconds | Delta |\n| --- | ---: | ---: | ---: |");
   for (const change of changes) {
     const delta =
-      change.old === undefined || change.old === 0
-        ? "new"
-        : `${(((change.next - change.old) / change.old) * 100).toFixed(1)}%`;
-    console.log(`| ${change.key} | ${change.old ?? "—"} | ${change.next} | ${delta} |`);
+      change.next === undefined
+        ? "removed"
+        : change.old === undefined || change.old === 0
+          ? "new"
+          : `${(((change.next - change.old) / change.old) * 100).toFixed(1)}%`;
+    console.log(`| ${change.key} | ${change.old ?? "—"} | ${change.next ?? "—"} | ${delta} |`);
   }
   if (changes.length === 0) {
     console.log("\nNo timing changes exceed the 15% write threshold.");

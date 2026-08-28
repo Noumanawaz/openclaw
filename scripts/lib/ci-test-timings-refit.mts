@@ -4,7 +4,7 @@ import type { CiTestTimings } from "./ci-test-timings-schema.mts";
 export type CiTimingRun = {
   id: number;
   createdAt: string;
-  logs: { kind: "uiE2e" | "compact"; text: string }[];
+  logs: ({ kind: "uiE2e"; text: string } | { kind: "compact"; text: string; labels: string[] })[];
 };
 
 type Samples = Map<string, number[]>;
@@ -47,7 +47,12 @@ function readUiLog(text: string, samples: Samples, overhead: number[]) {
   }
 }
 
-function readCompactLog(text: string, samples: Samples) {
+function readCompactLog(
+  text: string,
+  labels: string[],
+  samples: { blacksmith: Samples; github: Samples },
+) {
+  const profile = labels.some((label) => label.startsWith("blacksmith-")) ? "blacksmith" : "github";
   const starts = new Map<string, number>();
   for (const line of text.split("\n")) {
     const event =
@@ -65,14 +70,18 @@ function readCompactLog(text: string, samples: Samples) {
     }
     const started = starts.get(key);
     if (exitCode === "0" && started !== undefined) {
-      recordSample(samples, key, (Date.parse(timestamp) - started) / 1000);
+      // Keep contention from PLAN_CONCURRENCY=2: the packer predicts the same
+      // two-up workload; isolated timings would invalidate its admission caps.
+      recordSample(samples[profile], key, (Date.parse(timestamp) - started) / 1000);
     }
     starts.delete(key);
   }
 }
 
-function refitMap(samples: Samples, previous: Record<string, number> = {}) {
-  const next = { ...previous };
+function refitMap(samples: Samples, previous: Record<string, number> = {}, prune = false) {
+  const next = Object.fromEntries(
+    Object.entries(previous).filter(([key]) => !prune || samples.has(key)),
+  );
   for (const [key, values] of samples) {
     const center = median(values);
     const retained = values.filter((value) => value <= center * 2.5);
@@ -109,8 +118,7 @@ export function refitTestTimings(runs: CiTimingRun[], previous?: CiTestTimings) 
       if (log.kind === "uiE2e") {
         readUiLog(text, current.uiE2e, overhead);
       } else {
-        const profile = /\bBLACKSMITH_[A-Z0-9_]+\s*[:=]/u.test(text) ? "blacksmith" : "github";
-        readCompactLog(text, current[profile]);
+        readCompactLog(text, log.labels, current);
       }
     }
     // Retries or duplicate reporter lines in one run must not satisfy the two-run minimum.
@@ -128,14 +136,15 @@ export function refitTestTimings(runs: CiTimingRun[], previous?: CiTestTimings) 
     measuredOverhead === undefined ||
     (oldOverhead !== undefined && Math.abs(measuredOverhead - oldOverhead) <= oldOverhead * 0.15);
   const runIds = [...new Set(runs.map((run) => run.id))].toSorted((a, b) => a - b);
+  const prune = runIds.length >= 3;
   const timings: CiTestTimings = {
     compactGroupSeconds: {
-      blacksmith: refitMap(samples.blacksmith, previous?.compactGroupSeconds.blacksmith),
-      github: refitMap(samples.github, previous?.compactGroupSeconds.github),
+      blacksmith: refitMap(samples.blacksmith, previous?.compactGroupSeconds.blacksmith, prune),
+      github: refitMap(samples.github, previous?.compactGroupSeconds.github, prune),
     },
     source: `median of ${runIds.length} successful main CI runs: ${runIds.join(", ")}`,
     uiE2e: {
-      fileSeconds: refitMap(samples.uiE2e, previous?.uiE2e.fileSeconds),
+      fileSeconds: refitMap(samples.uiE2e, previous?.uiE2e.fileSeconds, prune),
       perFileOverheadSeconds: keepOverhead
         ? (oldOverhead ?? 0)
         : Math.round(measuredOverhead * 10) / 10,
@@ -149,7 +158,7 @@ export function refitTestTimings(runs: CiTimingRun[], previous?: CiTestTimings) 
       new Date().toISOString().slice(0, 10),
     version: 1,
   };
-  const changes: { key: string; old: number | undefined; next: number }[] = [];
+  const changes: { key: string; old: number | undefined; next: number | undefined }[] = [];
   const comparedMaps: [string, Record<string, number>, Record<string, number> | undefined][] = [
     [
       "compactGroupSeconds.blacksmith",
@@ -169,7 +178,8 @@ export function refitTestTimings(runs: CiTimingRun[], previous?: CiTestTimings) 
     ],
   ];
   for (const [prefix, next, old] of comparedMaps) {
-    for (const [key, value] of Object.entries(next)) {
+    for (const key of new Set([...Object.keys(next), ...Object.keys(old ?? {})])) {
+      const value = next[key];
       const oldValue = old?.[key];
       if (value !== oldValue) {
         changes.push({ key: `${prefix}.${key}`, old: oldValue, next: value });

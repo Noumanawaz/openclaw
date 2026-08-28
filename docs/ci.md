@@ -167,8 +167,14 @@ The `check-dependencies` shard runs production Knip dependency, unused-file, and
 Node groups. Both packers prefer these weights over their in-source cold-start
 tables. UI E2E keys are repo-relative paths, including tests under `ui/src/pages/`,
 and every file estimate includes the measured fork, import, and setup overhead.
-Compact groups have separate Blacksmith and GitHub-hosted measurements; hybrid
+Compact groups have separate Blacksmith and GitHub-hosted measurements, selected
+from jobs API runner labels (`blacksmith-*` versus hosted `ubuntu-24.04`); hybrid
 and large-group stripe adjustments continue to use their existing policies.
+Compact `[shard:x] begin` to `end` wall time includes contention from the other
+group running under `PLAN_CONCURRENCY = 2`. This is intentional: the packer
+predicts the same two-up jobs, and `COMPACT_LARGE_NODE_TEST_JOB_SECONDS` /
+`COMPACT_SMALL_NODE_TEST_JOB_SECONDS` were fitted against those contended walls.
+Switching to isolated group timings would invalidate those admission caps.
 
 The compact plan is built once in preflight. UI E2E shards build their partitions
 independently, so they must read the same committed file from the checkout. They
@@ -177,14 +183,24 @@ invalid timing files, or `OPENCLAW_CI_TEST_TIMINGS=0`, use the cold-start estima
 for the entire file; stale keys cannot change the discovered test inventory.
 
 With an authenticated `gh` CLI, run `pnpm ci:timings:refit` to regenerate the file
-from the last five successful `ci.yml` runs on `main`. Use `--runs <n>` to change
+from all attempts of the last five successful `ci.yml` runs on `main`. Use `--runs <n>` to change
 the sample window, `--repo <owner/repo>` to select a repository, `--out <path>` to
 write elsewhere, or `--dry-run` to print changed entries without writing.
 Measurements come only from successful UI E2E and compact jobs; compact groups
-also require an `exit 0` marker. Each entry needs at least two run samples.
+also require an `exit 0` marker. Each entry needs at least two run samples;
+multiple attempts within one run still contribute only one sample per key and
+profile. Keys absent from every sampled run are pruned only when at least three
+runs were sampled, with explicit removals in the dry-run and PR change tables.
 Samples above 2.5 times the key's median are discarded before taking the median,
 and existing weights stay unchanged when the new median is within 15%. UI E2E
 overhead is the median shard `(wall - body) / fileCount`, clamped to 0–5 seconds.
+
+An empty `compactGroupSeconds.github` map is designed cold-start behavior:
+main compact jobs normally run on Blacksmith, so the hosted profile keeps its
+in-source `COMPACT_GITHUB_GROUP_SECONDS_HINTS` fallback until hosted observations
+meet the sampling minimum. Later main attempts on the hybrid backend, or main
+runs using `OPENCLAW_CI_RUNNER_BACKEND=github`, can fill it naturally. Sampling
+stays main-only; fork PR timings never influence the packer.
 
 The `CI Test Timings Refit` workflow runs daily at 09:43 UTC and supports manual
 dispatch on `main`. When weights change, it updates the single
