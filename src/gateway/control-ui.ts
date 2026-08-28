@@ -72,6 +72,7 @@ import {
 } from "./control-ui-routing.js";
 import { normalizeControlUiBasePath } from "./control-ui-shared.js";
 import {
+  isControlUiFileUnmodified,
   isControlUiPrecompressedAssetExtension,
   isControlUiStaticAssetExtension,
   readAndCloseControlUiFile,
@@ -79,6 +80,7 @@ import {
   resolveControlUiHtmlEncoding,
   resolveOpenedControlUiRepresentation,
   respondControlUiNotAcceptable,
+  respondControlUiNotModified,
   respondHeadForControlUiFile,
   sendControlUiHtmlBody,
   serveControlUiAsset,
@@ -709,7 +711,7 @@ function resolveSafeControlUiFile(
   rootReal: string,
   filePath: string,
   rejectHardlinks: boolean,
-): { path: string; fd: number; size: number } | null {
+): { path: string; fd: number; size: number; mtimeMs: number } | null {
   const opened = openRootFileSync({
     absolutePath: filePath,
     rootPath: rootReal,
@@ -729,7 +731,7 @@ function resolveSafeControlUiFile(
       fallback: () => null,
     });
   }
-  return { path: opened.path, fd: opened.fd, size: opened.stat.size };
+  return { path: opened.path, fd: opened.fd, size: opened.stat.size, mtimeMs: opened.stat.mtimeMs };
 }
 
 function isSafeRelativePath(relPath: string) {
@@ -1052,6 +1054,12 @@ export async function handleControlUiHttpRequest(
       );
       return true;
     }
+    const lastModifiedMs = safeFile.mtimeMs;
+    if (isControlUiFileUnmodified(req, lastModifiedMs)) {
+      fs.closeSync(safeFile.fd);
+      respondControlUiNotModified(res, { immutable: immutableAsset, lastModifiedMs });
+      return true;
+    }
     const representation = resolveOpenedControlUiRepresentation({
       req,
       sourceFile: safeFile,
@@ -1069,6 +1077,7 @@ export async function handleControlUiHttpRequest(
           immutable: immutableAsset,
           encoding: representation.encoding,
           contentLength: representation.bodyFile.size,
+          lastModifiedMs,
         });
         return true;
       } finally {
@@ -1079,6 +1088,7 @@ export async function handleControlUiHttpRequest(
     await serveControlUiAsset(res, representation.contentPath, body, {
       immutable: immutableAsset,
       encoding: representation.encoding,
+      lastModifiedMs,
     });
     return true;
   }
