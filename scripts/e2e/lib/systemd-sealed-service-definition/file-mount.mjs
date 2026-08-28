@@ -145,9 +145,10 @@ exit 1
       await fs.writeFile(file, contents, { mode: 0o600 });
       await fs.chown(file, uid, gid);
     }
-    execFileSync("mount", ["--bind", source, unit]);
+    // Kernel setup must use Debian-owned tools, not PATH/npm fixture replacements.
+    execFileSync("/bin/mount", ["--bind", source, unit]);
     try {
-      execFileSync("mount", ["-o", "remount,bind,ro", unit]);
+      execFileSync("/bin/mount", ["-o", "remount,bind,ro", unit]);
       const probe = spawnSync(
         process.execPath,
         ["--input-type=module", "-e", `await (${kernelProbe.toString()})();`, unit],
@@ -174,7 +175,7 @@ exit 1
         `${kernelOnly ? "Kernel contract only" : "Packaged force-install denial"}: same-UID read-only file mount, mode=${mode.toString(8)}.`,
       );
     } finally {
-      execFileSync("umount", [unit]);
+      execFileSync("/bin/umount", [unit]);
     }
   }
 } catch (error) {
