@@ -11,6 +11,7 @@ import {
   resolveSpawnCall,
   shouldUseCmdExeForCommand,
 } from "../../scripts/ui.mts";
+import { mergeProcessEnv } from "../../src/infra/process-env.js";
 import { normalizeControlUiBuildInfo } from "../../ui/src/build-info-normalizers.ts";
 // writeFileSync creates the file before its content lands, so an existence
 // poll can observe an empty file on loaded runners; wait for bytes instead.
@@ -374,6 +375,7 @@ const path = require("node:path");
 const spawnSync = childProcess.spawnSync;
 const validators = ${JSON.stringify(validators)};
 assert.equal(process.env.TSX_DISABLE_CACHE, undefined);
+assert.equal(process.env.npm_execpath, ${JSON.stringify(pnpm)});
 childProcess.spawnSync = function(command, args, options) {
   if (args[0] === ${JSON.stringify(noPnpm ? path.resolve("node_modules/vite/bin/vite.js") : pnpm)}) {
     assert.deepEqual(args.slice(1), ${JSON.stringify(noPnpm ? ["build"] : ["run", "build"])});
@@ -387,23 +389,26 @@ childProcess.spawnSync = function(command, args, options) {
 require("node:module").syncBuiltinESMExports();
 `,
         );
-        const env: NodeJS.ProcessEnv = {
-          ...process.env,
-          TMPDIR: tempRoot,
-          TMP: tempRoot,
-          TEMP: tempRoot,
-          XDG_CACHE_HOME: path.join(tempDir, "xdg-cache"),
-          NODE_COMPILE_CACHE: path.join(tempDir, "node-cache"),
-          NODE_OPTIONS: `--require ${JSON.stringify(guard)}`,
-          OPENCLAW_BUILD_ALL_NO_PNPM: noPnpm ? "1" : "0",
-          OPENCLAW_BUILD_TIMESTAMP: "2026-08-27T00:00:00.000Z",
-          GIT_COMMIT: "a".repeat(40),
-          npm_execpath: pnpm,
-        };
-        delete env.TSX_DISABLE_CACHE;
-        delete env.TSX_TSCONFIG_PATH;
-        delete env.PNPM_CONFIG_MODULES_DIR;
-        delete env.npm_config_modules_dir;
+        // A spread can retain NPM_EXECPATH, which wins over npm_execpath on Windows.
+        const env = mergeProcessEnv([
+          process.env,
+          {
+            TMPDIR: tempRoot,
+            TMP: tempRoot,
+            TEMP: tempRoot,
+            XDG_CACHE_HOME: path.join(tempDir, "xdg-cache"),
+            NODE_COMPILE_CACHE: path.join(tempDir, "node-cache"),
+            NODE_OPTIONS: `--require ${JSON.stringify(guard)}`,
+            OPENCLAW_BUILD_ALL_NO_PNPM: noPnpm ? "1" : "0",
+            OPENCLAW_BUILD_TIMESTAMP: "2026-08-27T00:00:00.000Z",
+            GIT_COMMIT: "a".repeat(40),
+            npm_execpath: pnpm,
+            TSX_DISABLE_CACHE: undefined,
+            TSX_TSCONFIG_PATH: undefined,
+            PNPM_CONFIG_MODULES_DIR: undefined,
+            npm_config_modules_dir: undefined,
+          },
+        ]);
 
         if (!noPnpm && failValidator === null) {
           const control = spawnSync(process.execPath, ["--import", "tsx", fixture, "control"], {
