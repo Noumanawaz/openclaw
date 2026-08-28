@@ -116,10 +116,10 @@ USER.md
 !extensions/oc-path/src/oc-path/tests/fixtures/real/IDENTITY.md
 !extensions/oc-path/src/oc-path/tests/fixtures/real/USER.md
 *.tgz
+temp_auto_push.bat
 *.tar.gz
 *.zip
 .idea
-.vscode/
 
 # local tooling
 .antigravitycli/
@@ -236,3 +236,5 @@ extensions/discord/assets/embedded-app-sdk.mjs
 
 # Pinned Swift lint/format tools installed by scripts/install-swift-tools.sh
 .build/
+.gitignore
+branch_structure.json

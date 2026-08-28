@@ -139,7 +139,9 @@ describe("atomic cron run recovery", () => {
       END;
     `);
     try {
-      expect(() => recoverCronRunProposal(state, proposal)).toThrow("pending recovery unavailable");
+      expect(() => recoverCronRunProposal(state, proposal, "startup")).toThrow(
+        "pending recovery unavailable",
+      );
       expect(inspectActiveCronRunReceipt({ storePath, jobId: job.id })?.receiptId).toBe(
         receipt.receiptId,
       );
@@ -150,7 +152,7 @@ describe("atomic cron run recovery", () => {
     } finally {
       database.exec("DROP TRIGGER reject_pending_recovery");
     }
-    expect(recoverCronRunProposal(state, proposal)).toMatchObject({ kind: "repaired" });
+    expect(recoverCronRunProposal(state, proposal, "startup")).toMatchObject({ kind: "repaired" });
     expect(inspectActiveCronRunReceipt({ storePath, jobId: job.id })).toBeUndefined();
     const pending = (await loadCronStore(storePath)).jobs[0];
     expect(pending?.state).toMatchObject({
@@ -297,8 +299,12 @@ describe("atomic cron run recovery", () => {
       try {
         if (phase === "repair") {
           const proposal = proposeCronRunRecovery(first, job.id, undefined, startedAtMs);
-          expect(recoverCronRunProposal(first, proposal)).toMatchObject({ kind: "repaired" });
-          expect(recoverCronRunProposal(first, proposal)).toMatchObject({ kind: "superseded" });
+          expect(recoverCronRunProposal(first, proposal, "startup")).toMatchObject({
+            kind: "repaired",
+          });
+          expect(recoverCronRunProposal(first, proposal, "startup")).toMatchObject({
+            kind: "superseded",
+          });
           recomputeUnownedCronSchedules(first, { recomputeExpired: true });
         } else {
           await start(first);
