@@ -82,8 +82,10 @@ reconcile dependencies before the remote wrapper starts.
 Maintained JavaScript tooling wrappers and root package commands use tsx's
 in-process transform cache. They skip its shared disk cache before the loader
 starts, and child tooling inherits that policy. This does not relocate or clean
-temporary directories, Node or Vitest caches, or other global caches. Raw external
-`tsx` and `node --import tsx` invocations outside these launchers are unchanged.
+temporary directories, Node or Vitest caches, or other global caches. Standalone
+`pnpm ui:build` keeps native startup and applies the same preload to its post-build
+validators; it does not require `TSX_DISABLE_CACHE` in the invoking shell. Raw
+external `tsx` and `node --import tsx` invocations outside these launchers are unchanged.
 
 Test wrapper runs end with a short `[test] passed|failed|skipped ... in ...` summary; Vitest's own duration line stays the per-shard detail.
 
