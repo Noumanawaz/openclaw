@@ -144,7 +144,6 @@ function applyEnvelopeToFlow(params: {
 async function executeManagedLobsterFlow(
   params: Pick<RunManagedLobsterFlowParams, "taskFlow" | "runner" | "runnerParams" | "waitingStep">,
   flow: FlowRecord,
-  failureFlowId = flow.flowId,
 ): Promise<ManagedLobsterFlowResult> {
   try {
     const envelope = await params.runner.run(params.runnerParams);
@@ -162,7 +161,7 @@ async function executeManagedLobsterFlow(
     const err = error instanceof Error ? error : new Error(String(error));
     try {
       const mutation = params.taskFlow.fail({
-        flowId: failureFlowId,
+        flowId: flow.flowId,
         expectedRevision: flow.revision,
       });
       return { ok: false, flow, mutation, error: err };
@@ -207,5 +206,5 @@ export async function resumeManagedLobsterFlow(
       error: new Error(`TaskFlow resume failed: ${resumed.code}`),
     };
   }
-  return await executeManagedLobsterFlow(params, resumed.flow, params.flowId);
+  return await executeManagedLobsterFlow(params, resumed.flow);
 }
