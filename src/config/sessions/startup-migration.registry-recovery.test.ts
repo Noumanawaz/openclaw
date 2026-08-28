@@ -72,6 +72,87 @@ it("does not create a missing configured agent database during startup maintenan
   expect(sweepOrphanSessionStoreTemps).toHaveBeenCalledWith({ storePath });
 });
 
+it("enters directory-dependent migration only for a real legacy sessions directory", async () => {
+  const root = fs.realpathSync.native(tempDirs.make("openclaw-startup-legacy-dir-gate-"));
+  const stateDir = path.join(root, "state");
+  const env = { ...process.env, OPENCLAW_STATE_DIR: stateDir };
+  const cfg: OpenClawConfig = {
+    agents: { entries: { ops: { default: true } } },
+  };
+  await replaceSessionEntry(
+    { agentId: "ops", env, sessionKey: "agent:ops:main" },
+    { sessionId: "sqlite-only", updatedAt: 1 },
+  );
+  closeOpenClawAgentDatabasesForTest();
+
+  const migrateLegacyMainSessionKeys = vi.fn(async () => ({
+    armed: false,
+    changes: [],
+    complete: false,
+    ledgerComplete: false,
+    legacyAgentId: "main",
+    mainKey: "main",
+    outcomes: [{ kind: "not-armed" as const }],
+    warnings: [],
+  }));
+  const migrateOrphanedSessionKeys = vi.fn<
+    NonNullable<
+      NonNullable<
+        Parameters<typeof runSessionStartupMigration>[0]["deps"]
+      >["migrateOrphanedSessionKeys"]
+    >
+  >(async ({ legacySessionSurfaces }) => {
+    if (typeof legacySessionSurfaces === "function") {
+      legacySessionSurfaces();
+    }
+    return { changes: [], warnings: [] };
+  });
+  const prepareLegacySessionSurfaces = vi.fn(() => EMPTY_LEGACY_SESSION_SURFACES);
+  const resolveAllAgentSessionStoreTargetsSync = vi.fn(() => []);
+  const log = { info: vi.fn(), warn: vi.fn() };
+  const run = () =>
+    runSessionStartupMigration({
+      cfg,
+      env,
+      log,
+      deps: {
+        migrateLegacyMainSessionKeys,
+        migrateOrphanedSessionKeys,
+        prepareLegacySessionSurfaces,
+        resolveAllAgentSessionStoreTargetsSync,
+        sweepOrphanSessionStoreTemps: vi.fn(async () => 0),
+      },
+    });
+
+  const statSync = vi.spyOn(fs, "statSync").mockImplementationOnce(() => {
+    throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+  });
+  try {
+    await expect(run()).resolves.toBe(false);
+  } finally {
+    statSync.mockRestore();
+  }
+  expect(log.warn).toHaveBeenCalledWith(expect.stringContaining("permission denied"));
+  expect(migrateLegacyMainSessionKeys).toHaveBeenCalledOnce();
+  expect(migrateOrphanedSessionKeys).not.toHaveBeenCalled();
+  expect(prepareLegacySessionSurfaces).not.toHaveBeenCalled();
+  expect(resolveAllAgentSessionStoreTargetsSync).not.toHaveBeenCalled();
+
+  await expect(run()).resolves.toBe(false);
+  expect(migrateLegacyMainSessionKeys).toHaveBeenCalledTimes(2);
+  expect(migrateOrphanedSessionKeys).not.toHaveBeenCalled();
+  expect(prepareLegacySessionSurfaces).not.toHaveBeenCalled();
+  expect(resolveAllAgentSessionStoreTargetsSync).not.toHaveBeenCalled();
+
+  fs.mkdirSync(path.join(stateDir, "agents", "ops", "sessions"));
+
+  await expect(run()).resolves.toBe(true);
+  expect(migrateLegacyMainSessionKeys).toHaveBeenCalledTimes(3);
+  expect(migrateOrphanedSessionKeys).toHaveBeenCalledOnce();
+  expect(prepareLegacySessionSurfaces).toHaveBeenCalledOnce();
+  expect(resolveAllAgentSessionStoreTargetsSync).toHaveBeenCalledOnce();
+});
+
 it("re-registers durable lineage children before configured-only runtime reads", async () => {
   const root = fs.realpathSync.native(tempDirs.make("openclaw-startup-registry-recovery-"));
   const stateDir = path.join(root, "state");

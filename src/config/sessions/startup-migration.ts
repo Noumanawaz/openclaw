@@ -53,14 +53,14 @@ export async function runSessionStartupMigration(params: {
   const resolveTargets =
     params.deps?.resolveAllAgentSessionStoreTargetsSync ?? resolveAllAgentSessionStoreTargetsSync;
   let targets: ReturnType<typeof resolveTargets> | undefined;
-  let hasLegacySessionDirectories = true;
+  let hasLegacySessionDirectories = Boolean(params.cfg.session?.store);
   try {
-    if (
-      !params.cfg.session?.store &&
-      (await resolveAgentSessionDirs(resolveStateDir(env))).length === 0
-    ) {
-      hasLegacySessionDirectories = false;
-    } else {
+    if (!hasLegacySessionDirectories) {
+      hasLegacySessionDirectories = (await resolveAgentSessionDirs(resolveStateDir(env))).some(
+        (sessionsDir) => fs.statSync(sessionsDir, { throwIfNoEntry: false })?.isDirectory(),
+      );
+    }
+    if (hasLegacySessionDirectories) {
       targets = resolveTargets(params.cfg, { env });
     }
   } catch (err) {
