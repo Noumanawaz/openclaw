@@ -1,11 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
-import { runOpenClawStateWriteTransaction } from "../../state/openclaw-state-db.js";
+import {
+  openOpenClawStateDatabase,
+  runOpenClawStateWriteTransaction,
+} from "../../state/openclaw-state-db.js";
 import { setupCronServiceSuite, writeCronStoreSnapshot } from "../service.test-harness.js";
 import { loadCronStore } from "../store.js";
 import {
   claimCronRunReceiptInDatabase,
   finishCronRunReceipt,
   finishCronRunReceiptInDatabase,
+  inspectActiveCronRunReceipt,
   prepareCronRunReceiptClaim,
   releaseLocalCronRunReceiptOwnership,
   type CronRunReceiptHandle,
@@ -111,6 +115,62 @@ async function commitCompletedJob(params: {
 }
 
 describe("atomic cron run recovery", () => {
+  it("rolls back receipt retirement when the pending recovery slot cannot commit", async () => {
+    const { storePath } = await makeStorePath();
+    const startedAtMs = Date.now();
+    const job = makeJob("recovery-rollback", startedAtMs);
+    job.schedule = { kind: "at", at: new Date(startedAtMs).toISOString() };
+    job.deleteAfterRun = true;
+    job.delivery = { mode: "none" };
+    await writeCronStoreSnapshot({ storePath, jobs: [job] });
+    const receipt = claimReceipt(storePath, job, startedAtMs);
+    releaseLocalCronRunReceiptOwnership(receipt);
+    const state = makeState(storePath, startedAtMs);
+    const proposal = proposeCronRunRecovery(state, job.id, undefined, startedAtMs);
+    const database = openOpenClawStateDatabase().db;
+    // Fail the row write after receipt retirement, inside the real transaction.
+    database.exec(`
+      CREATE TEMP TRIGGER reject_pending_recovery
+      BEFORE UPDATE ON cron_jobs
+      WHEN NEW.job_id = 'recovery-rollback'
+        AND json_extract(NEW.state_json, '$.startupCatchupAtMs') IS NOT NULL
+      BEGIN
+        SELECT RAISE(ABORT, 'pending recovery unavailable');
+      END;
+    `);
+    try {
+      expect(() => recoverCronRunProposal(state, proposal)).toThrow("pending recovery unavailable");
+      expect(inspectActiveCronRunReceipt({ storePath, jobId: job.id })?.receiptId).toBe(
+        receipt.receiptId,
+      );
+      const persisted = (await loadCronStore(storePath)).jobs[0];
+      expect(persisted?.state.runningAtMs).toBe(startedAtMs);
+      expect(persisted?.state.startupCatchupAtMs).toBeUndefined();
+      expect(persisted?.state.lastRunStatus).toBeUndefined();
+    } finally {
+      database.exec("DROP TRIGGER reject_pending_recovery");
+    }
+    expect(recoverCronRunProposal(state, proposal)).toMatchObject({ kind: "repaired" });
+    expect(inspectActiveCronRunReceipt({ storePath, jobId: job.id })).toBeUndefined();
+    const pending = (await loadCronStore(storePath)).jobs[0];
+    expect(pending?.state).toMatchObject({
+      nextRunAtMs: startedAtMs,
+      startupCatchupAtMs: startedAtMs,
+      consecutiveErrors: 1,
+    });
+    const runCommandJob = vi.fn(async () => ({ status: "ok" as const }));
+    for (let restart = 0; restart < 3; restart += 1) {
+      const next = createCronServiceState({ ...state.deps, runCommandJob });
+      try {
+        await start(next);
+        expect(runCommandJob).toHaveBeenCalledOnce();
+        expect((await loadCronStore(storePath)).jobs).toHaveLength(0);
+      } finally {
+        stop(next);
+      }
+    }
+  });
+
   it.each([
     { terminal: undefined, deleteAfterRun: false },
     { terminal: undefined, deleteAfterRun: true },
@@ -118,10 +178,11 @@ describe("atomic cron run recovery", () => {
     { terminal: "ok", deleteAfterRun: true },
     { terminal: "error", deleteAfterRun: false },
     { terminal: "error", deleteAfterRun: true },
+    { terminal: "skipped", deleteAfterRun: false },
     { terminal: "skipped", deleteAfterRun: true },
     { terminal: undefined, deleteAfterRun: true, result: "error" },
   ] as const)(
-    "recovers only a nonterminal one-shot across two restarts (terminal=$terminal, deleteAfterRun=$deleteAfterRun, result=$result)",
+    "recovers only a nonterminal one-shot across three restarts (terminal=$terminal, deleteAfterRun=$deleteAfterRun, result=$result)",
     async (testCase) => {
       const { terminal, deleteAfterRun } = testCase;
       const recoveredStatus = testCase.result ?? "ok";
@@ -170,7 +231,7 @@ describe("atomic cron run recovery", () => {
         error: recoveredStatus === "error" ? "command failed" : undefined,
       }));
       const onEvent = vi.fn();
-      for (let restart = 0; restart < 2; restart += 1) {
+      for (let restart = 0; restart < 3; restart += 1) {
         const state = createCronServiceState({
           ...makeState(storePath, Date.now()).deps,
           runCommandJob,
@@ -253,12 +314,30 @@ describe("atomic cron run recovery", () => {
       } finally {
         stop(first);
       }
+      if (phase !== "repair") {
+        for (let restart = 0; restart < 3; restart += 1) {
+          await vi.advanceTimersByTimeAsync(1);
+          const pendingState = freshState();
+          try {
+            await start(pendingState);
+            const pending = (await loadCronStore(storePath)).jobs[0];
+            const dueAt = nowMs + (phase === "agent-deferral" ? 120_000 : 5_000);
+            expect(pending).toMatchObject({
+              enabled: true,
+              state: { nextRunAtMs: dueAt, startupCatchupAtMs: dueAt, consecutiveErrors: 1 },
+            });
+            expect(runJob).not.toHaveBeenCalled();
+          } finally {
+            stop(pendingState);
+          }
+        }
+      }
       const second = freshState();
       try {
         await start(second);
         if (phase !== "repair") {
           expect(runJob).not.toHaveBeenCalled();
-          const delay = phase === "agent-deferral" ? 120_000 : 5_000;
+          const delay = nowMs + (phase === "agent-deferral" ? 120_000 : 5_000) - Date.now();
           await vi.advanceTimersByTimeAsync(delay - 1);
           expect(runJob).not.toHaveBeenCalled();
           await vi.advanceTimersByTimeAsync(1);
