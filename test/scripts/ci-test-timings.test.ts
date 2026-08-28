@@ -48,6 +48,26 @@ const baseline: CiTestTimings = {
   version: 1,
 };
 
+it("rejects non-plain timing objects even when their fields are valid", () => {
+  expect(() =>
+    ciTestTimingsSchema.parse(
+      Object.create({ inherited: true }, Object.getOwnPropertyDescriptors(baseline)),
+    ),
+  ).toThrow();
+  expect(() =>
+    ciTestTimingsSchema.parse({
+      ...baseline,
+      uiE2e: {
+        ...baseline.uiE2e,
+        fileSeconds: Object.create(
+          { inherited: 1 },
+          { measured: { value: 100, enumerable: true } },
+        ),
+      },
+    }),
+  ).toThrow();
+});
+
 describe("CI test timing refit", () => {
   it("records per-file medians without outliers or one-run weights and measures excluded overhead", () => {
     const pageFile = "ui/src/pages/settings/measured.e2e.test.ts";
@@ -68,7 +88,7 @@ describe("CI test timing refit", () => {
       fileSeconds: { [measuredFile]: 34, [pageFile]: 2 },
       perFileOverheadSeconds: 0.6,
     });
-    expect(ciTestTimingsSchema.safeParse(timings).success).toBe(true);
+    expect(ciTestTimingsSchema.parse(timings)).toEqual(timings);
   });
 
   it("buckets successful compact spans by their job runner and excludes failed or incomplete spans", () => {
@@ -408,23 +428,57 @@ describe("committed CI timing loader", () => {
     ["truncated", '{"version":1'],
     ["non-object root", "null"],
     ["wrong version", JSON.stringify({ ...baseline, version: 2 })],
+    ["unknown root key", JSON.stringify({ ...baseline, extra: 1 })],
+    ["empty source", JSON.stringify({ ...baseline, source: "" })],
+    ...["2026-02-29", "1900-02-29", "2026-04-31", "2026-8-22", "2026-08-22T00:00:00Z"].map(
+      (updatedAt): [string, string] => [
+        `invalid date ${updatedAt}`,
+        JSON.stringify({ ...baseline, updatedAt }),
+      ],
+    ),
+    ["unknown UI key", JSON.stringify({ ...baseline, uiE2e: { ...baseline.uiE2e, extra: 1 } })],
     [
-      "non-object map",
-      JSON.stringify({ ...baseline, uiE2e: { ...baseline.uiE2e, fileSeconds: [] } }),
-    ],
-    ["missing profile", JSON.stringify({ ...baseline, compactGroupSeconds: { blacksmith: {} } })],
-    ...[0, -1, "2", null, 1.2].map((seconds): [string, string] => [
-      `invalid seconds ${String(seconds)}`,
+      "unknown compact profile",
       JSON.stringify({
         ...baseline,
-        compactGroupSeconds: { blacksmith: { group: seconds }, github: {} },
+        compactGroupSeconds: { ...baseline.compactGroupSeconds, extra: {} },
+      }),
+    ],
+    ["missing profile", JSON.stringify({ ...baseline, compactGroupSeconds: { blacksmith: {} } })],
+    ...["ui", "blacksmith", "github"].flatMap((profile) =>
+      [
+        null,
+        [],
+        { "": 1 },
+        ...[0, -1, "2", null, 1.2, Number.MAX_SAFE_INTEGER + 1].map((seconds) => ({
+          valid: 100,
+          invalid: seconds,
+        })),
+      ].map((seconds): [string, string] => [
+        `invalid ${profile} map ${JSON.stringify(seconds)}`,
+        JSON.stringify(
+          profile === "ui"
+            ? { ...baseline, uiE2e: { ...baseline.uiE2e, fileSeconds: seconds } }
+            : {
+                ...baseline,
+                compactGroupSeconds: {
+                  blacksmith: { valid: 100 },
+                  github: { valid: 100 },
+                  [profile]: seconds,
+                },
+              },
+        ),
+      ]),
+    ),
+    ["non-finite seconds", JSON.stringify(baseline).replace(":100", ":1e999")],
+    ...[-1, 5.1, null, "1"].map((overhead): [string, string] => [
+      `invalid overhead ${String(overhead)}`,
+      JSON.stringify({
+        ...baseline,
+        uiE2e: { ...baseline.uiE2e, perFileOverheadSeconds: overhead },
       }),
     ]),
-    ["non-finite seconds", JSON.stringify(baseline).replace(":100", ":1e999")],
-    [
-      "negative overhead",
-      JSON.stringify({ ...baseline, uiE2e: { ...baseline.uiE2e, perFileOverheadSeconds: -1 } }),
-    ],
+    ["non-finite overhead", JSON.stringify(baseline).replace(":0.6", ":1e999")],
   ];
 
   it.each(invalidFiles)("ignores the entire %s file without throwing", async (_name, contents) => {
@@ -433,6 +487,22 @@ describe("committed CI timing loader", () => {
     expect(loader.readCompactGroupTimings("blacksmith")).toEqual({});
     expect(loader.readCompactGroupTimings("github")).toEqual({});
   });
+
+  it.each([0, 5])(
+    "accepts overhead boundary %s, safe integers and leap dates",
+    async (overhead) => {
+      const data = {
+        ...baseline,
+        updatedAt: "2000-02-29",
+        uiE2e: {
+          fileSeconds: { [measuredFile]: Number.MAX_SAFE_INTEGER },
+          perFileOverheadSeconds: overhead,
+        },
+      };
+      const { loader } = await readTimings(JSON.stringify(data));
+      expect(loader.readUiE2eFileTimings()).toEqual(data.uiE2e);
+    },
+  );
 
   it("reads the repo-relative file once and honors the disable switch even after caching", async () => {
     const data = {

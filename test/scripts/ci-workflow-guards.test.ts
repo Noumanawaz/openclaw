@@ -12,11 +12,13 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { isBuiltin } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
 import { expectDefined } from "@openclaw/normalization-core";
+import ts from "typescript";
 import { afterEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import {
@@ -25,6 +27,7 @@ import {
   shouldRunNativeI18n,
   writeGitHubOutput,
 } from "../../scripts/ci-changed-scope.mjs";
+import { visitModuleSpecifiers } from "../../scripts/lib/guard-inventory-utils.mjs";
 import { NATIVE_I18N_LOCALES } from "../../scripts/native-i18n-locales.ts";
 import { resolvePnpmRunner } from "../../scripts/pnpm-runner.mts";
 import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
@@ -6921,6 +6924,106 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
     expect(incompleteCurrent.output).toContain(
       "Target does not provide a supported deadcode check.",
     );
+  });
+
+  it("keeps the preflight manifest import closure dependency-free", () => {
+    const manifestStep = readCiWorkflow().jobs.preflight.steps.find(
+      (step: WorkflowStep) => step.name === "Build CI manifest",
+    );
+    const manifestRun = expectDefined(manifestStep?.run, "Build CI manifest script");
+    const manifestSource = expectDefined(
+      manifestRun.match(/--input-type=module <<'([A-Z][A-Z0-9_]*)'\n([\s\S]*?)\n\1(?=\n|$)/u)?.[2],
+      "Build CI manifest Node source",
+    );
+    const repoRoot = process.cwd();
+    const pending = new Set<string>();
+
+    function inspectImports(file: string, source: string, workflow = false) {
+      const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+      const specifiers = new Set<string>();
+      const constants = new Map<string, string>();
+      for (const statement of sourceFile.statements) {
+        if (
+          !ts.isVariableStatement(statement) ||
+          !(statement.declarationList.flags & ts.NodeFlags.Const)
+        ) {
+          continue;
+        }
+        for (const declaration of statement.declarationList.declarations) {
+          if (
+            ts.isIdentifier(declaration.name) &&
+            declaration.initializer &&
+            ts.isStringLiteralLike(declaration.initializer)
+          ) {
+            constants.set(declaration.name.text, declaration.initializer.text);
+          }
+        }
+      }
+      visitModuleSpecifiers(
+        ts,
+        sourceFile,
+        ({ specifier }: { specifier: string }) => specifiers.add(specifier),
+        { includeCommonJs: true, includeImportTypes: true },
+      );
+      function visit(node: ts.Node) {
+        // The workflow selects current .mts or historical .mjs candidates before
+        // importing them through variables/helpers. Follow its existing module paths.
+        if (
+          workflow &&
+          ts.isStringLiteralLike(node) &&
+          /^\.\.?\/.*\.[cm]?[jt]s$/u.test(node.text) &&
+          existsSync(node.text)
+        ) {
+          specifiers.add(node.text);
+        }
+        if (
+          !workflow &&
+          ts.isCallExpression(node) &&
+          (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+            (ts.isIdentifier(node.expression) && node.expression.text === "require"))
+        ) {
+          const argument = node.arguments[0];
+          if (!argument || !ts.isStringLiteralLike(argument)) {
+            const specifier =
+              argument && ts.isIdentifier(argument) ? constants.get(argument.text) : undefined;
+            expect(
+              specifier,
+              `${file}: cannot statically resolve module specifier ${argument?.getText(sourceFile) ?? "<missing>"}`,
+            ).toBeDefined();
+            specifiers.add(expectDefined(specifier, "resolved module specifier"));
+          }
+        }
+        ts.forEachChild(node, visit);
+      }
+      visit(sourceFile);
+      for (const specifier of specifiers) {
+        const diagnostic = `${file}: preflight import ${JSON.stringify(specifier)} must resolve without node_modules`;
+        if (specifier.startsWith("node:")) {
+          expect(isBuiltin(specifier), diagnostic).toBe(true);
+          continue;
+        }
+        expect(specifier, diagnostic).toMatch(/^\.\.?\//u);
+        const importedFile = path.relative(
+          repoRoot,
+          path.resolve(workflow ? repoRoot : path.dirname(file), specifier),
+        );
+        expect(importedFile, diagnostic).not.toMatch(/^(?:\.\.(?:[\\/]|$)|[\\/])/u);
+        expect(importedFile.split(path.sep), diagnostic).not.toContain("node_modules");
+        expect(existsSync(importedFile), `${diagnostic}; missing ${importedFile}`).toBe(true);
+        pending.add(importedFile);
+      }
+    }
+
+    inspectImports(".github/workflows/ci.yml (Build CI manifest)", manifestSource, true);
+    expect(pending.size, "workflow must declare preflight module entry points").toBeGreaterThan(0);
+    // Set iteration visits newly discovered modules once, including cycles.
+    for (const file of pending) {
+      expect(
+        pending.size,
+        "preflight import closure exceeded 256 repository files",
+      ).toBeLessThanOrEqual(256);
+      inspectImports(file, readFileSync(file, "utf8"));
+    }
   });
 
   it("runs mobile protocol coverage for Node and native-only changes", () => {
