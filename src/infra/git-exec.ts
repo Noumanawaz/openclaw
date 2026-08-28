@@ -7,10 +7,10 @@ export const GIT_TIMEOUT_MS = 120_000;
 export async function executeGitCommand(
   cwd: string,
   args: string[],
-  options: { env?: NodeJS.ProcessEnv; input?: string | Uint8Array } = {},
+  options: { env?: NodeJS.ProcessEnv; input?: string | Uint8Array; timeoutMs?: number } = {},
 ): Promise<SpawnResult> {
   return await runCommandWithTimeout(["git", "-C", cwd, ...args], {
-    timeoutMs: GIT_TIMEOUT_MS,
+    timeoutMs: options.timeoutMs ?? GIT_TIMEOUT_MS,
     env: options.env,
     input: options.input,
   });
@@ -30,7 +30,7 @@ export function createGitCommandError(
 export async function requireGitCommand(
   cwd: string,
   args: string[],
-  options: { env?: NodeJS.ProcessEnv; input?: string | Uint8Array } = {},
+  options: { env?: NodeJS.ProcessEnv; input?: string | Uint8Array; timeoutMs?: number } = {},
 ): Promise<string> {
   const result = await executeGitCommand(cwd, args, options);
   if (result.code !== 0) {

@@ -21,6 +21,8 @@ The repository fingerprint is the first 16 hexadecimal characters of a SHA-256 h
 
 OpenClaw creates branch `openclaw/<name>` at the requested base ref. Without a base ref, it fetches `origin`, uses the remote default branch when available, and falls back to local `HEAD` when the repository is offline or has no usable remote.
 
+Each `git worktree add` checkout during creation or snapshot restore has a five-minute timeout, including a creation retry from local `HEAD`. Other managed-worktree Git commands keep their two-minute timeout. The separate `.openclaw/worktree-setup.sh` step also keeps its own two-minute timeout.
+
 ## Provision ignored files
 
 Add `.worktreeinclude` at the source repository root to copy selected ignored, untracked files into a new worktree. The file uses gitignore-pattern syntax, one pattern per line, with `#` comments:

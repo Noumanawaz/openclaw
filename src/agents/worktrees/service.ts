@@ -73,6 +73,8 @@ const WORKTREE_CREATE_LEASE_SCOPE = "core:managed-worktrees:create";
 const WORKTREE_OWNER_LEASE_SCOPE = "core:managed-worktrees:owner";
 const WORKTREE_CREATE_LEASE_MS = 60_000;
 const WORKTREE_CREATE_LEASE_WAIT_MS = 5 * 60_000;
+// Materializing a checkout gets extra time without extending other Git commands or setup.
+const WORKTREE_CHECKOUT_TIMEOUT_MS = 300_000;
 
 /** Removal aborted because snapshot loss was not permitted. */
 export class WorktreeSnapshotError extends Error {
@@ -739,7 +741,9 @@ export class ManagedWorktreeService {
     let recordBase = base.recordRef;
     const runRepositorySetup = params.runSetupScript !== false;
     const worktreeAddArgs = () => ["worktree", "add", "-b", branch, "--", worktreePath, gitBase];
-    let added = await runGit(repository.repoRoot, worktreeAddArgs());
+    let added = await runGit(repository.repoRoot, worktreeAddArgs(), {
+      timeoutMs: WORKTREE_CHECKOUT_TIMEOUT_MS,
+    });
     if (added.code !== 0 && base.remote) {
       if (!(await canResetFailedWorktreeAdd(repository.repoRoot, worktreePath, branch, added))) {
         throw commandError("git worktree add", added);
@@ -747,7 +751,9 @@ export class ManagedWorktreeService {
       await resetFailedWorktreeAdd(repository.repoRoot, worktreePath, branch);
       gitBase = "HEAD";
       recordBase = "HEAD";
-      added = await runGit(repository.repoRoot, worktreeAddArgs());
+      added = await runGit(repository.repoRoot, worktreeAddArgs(), {
+        timeoutMs: WORKTREE_CHECKOUT_TIMEOUT_MS,
+      });
     }
     if (added.code !== 0) {
       throw commandError("git worktree add", added);
@@ -1065,13 +1071,11 @@ export class ManagedWorktreeService {
     }
     const parent = await requireGit(record.repoRoot, ["rev-parse", `${record.snapshotRef}^`]);
     await fs.mkdir(path.dirname(record.path), { recursive: true });
-    await requireGit(record.repoRoot, [
-      "worktree",
-      "add",
-      "--detach",
-      record.path,
-      record.snapshotRef,
-    ]);
+    await requireGit(
+      record.repoRoot,
+      ["worktree", "add", "--detach", record.path, record.snapshotRef],
+      { timeoutMs: WORKTREE_CHECKOUT_TIMEOUT_MS },
+    );
     let branchCreated = false;
     let restoredProvisionedPaths: string[];
     try {
