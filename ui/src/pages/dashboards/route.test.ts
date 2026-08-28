@@ -2,6 +2,7 @@
 
 import type { RouteLoaderOptions } from "@openclaw/uirouter";
 import { describe, expect, it, vi } from "vitest";
+import { SIDEBAR_SESSION_ROSTER_LIMIT } from "../../../../src/shared/session-list-limits.ts";
 import type { ApplicationContext } from "../../app/context.ts";
 import { page } from "./route.ts";
 

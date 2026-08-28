@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { SIDEBAR_SESSION_ROSTER_LIMIT } from "../../../src/shared/session-list-limits.ts";
 import {
   captureUiProof,
   createSessionManagementE2eSuite,
@@ -73,8 +74,13 @@ function rosterMock() {
     methodResponses: {
       "sessions.list": {
         cases: [
+          // Pre-fix builds asked for these; the shipped roster asks for the define.
           { match: { limit: 50 }, response: truncated(50) },
           { match: { limit: 60 }, response: truncated(60) },
+          {
+            match: { limit: SIDEBAR_SESSION_ROSTER_LIMIT },
+            response: sessionsListResponse(roster(), { totalCount: roster().length }),
+          },
           { match: {}, response: sessionsListResponse(roster(), { totalCount: roster().length }) },
         ],
       },

@@ -1,10 +1,11 @@
-// @vitest-environment node
 import {
   DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS,
   GatewayProtocolClient,
   type GatewayProtocolSocketHandlers,
 } from "@openclaw/gateway-client/browser";
 import { describe, expect, it, vi } from "vitest";
+// @vitest-environment node
+import { SIDEBAR_SESSION_ROSTER_LIMIT } from "../../../../src/shared/session-list-limits.ts";
 import { createDeferred } from "../../../../test/helpers/promise.js";
 import {
   GatewayRequestError,
@@ -180,13 +181,11 @@ describe("session connection hydration", () => {
         expect.objectContaining({
           agentId: "main",
           ownerFirst: true,
+          limit: SIDEBAR_SESSION_ROSTER_LIMIT,
         }),
         { timeoutMs: DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS },
       ),
     );
-    expect(
-      request.mock.calls.find(([method]) => method === "sessions.subscribe")?.[1],
-    ).not.toHaveProperty("limit");
     expect(request.mock.calls.filter(([method]) => method === "sessions.list")).toHaveLength(0);
     expect(sessions.state.result).toBeNull();
     const queuedRefresh = sessions.refresh({ agentId: "other", search: "queued", force: true });
@@ -326,7 +325,7 @@ describe("session connection hydration", () => {
         .map(([, params]) => params),
     ).toEqual([
       expect.not.objectContaining({ ownerFirst: expect.anything() }),
-      expect.objectContaining({ ownerFirst: true }),
+      expect.objectContaining({ ownerFirst: true, limit: SIDEBAR_SESSION_ROSTER_LIMIT }),
     ]);
     expect(sessions.state.result?.sessions).toEqual([]);
     expect(sessions.state.agentId).toBe("main");

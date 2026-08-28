@@ -1,5 +1,6 @@
 import type { SessionsDeleteResult } from "../../../../packages/gateway-protocol/src/index.js";
 import { SESSION_ARCHIVE_REQUEST_OPTIONS } from "../../../../src/shared/session-archive-timeout.ts";
+import { SIDEBAR_SESSION_ROSTER_LIMIT } from "../../../../src/shared/session-list-limits.ts";
 import type {
   SessionBranch,
   SessionsBranchesListResult,
@@ -24,13 +25,16 @@ import type {
   SessionResetOptions,
 } from "./session-capability.ts";
 
-/** Gateway rosters omit recency so Chat and Settings agree, and omit `limit` so
- *  every session reaches the sidebar: a truncated roster silently empties whole
- *  categories whose newest session falls outside the page. */
-export const DEFAULT_SESSION_LIST_QUERY = {} as const satisfies SessionListOptions;
+/** Gateway rosters omit recency so Chat and Settings agree, and carry the shared
+ *  sidebar page size: a roster smaller than the store empties whole categories
+ *  whose newest session falls outside the page, so the remainder is reachable
+ *  through the list's Load more control rather than lost. */
+export const DEFAULT_SESSION_LIST_QUERY = {
+  limit: SIDEBAR_SESSION_ROSTER_LIMIT,
+} as const satisfies SessionListOptions;
 
 /** Starting page size for the Sessions page's explicit, user-editable limit
- *  field. Rosters stay unbounded; only this operator-chosen control paginates. */
+ *  field, kept separate from the roster page so tuning one never moves the other. */
 export const SESSIONS_PAGE_DEFAULT_LIMIT = 50;
 
 const SESSION_LIST_PARAMS = {
@@ -65,7 +69,9 @@ function buildTranscriptMutationParams(
 
 export function buildSessionListParams(options: SessionListOptions = {}): Record<string, unknown> {
   const params: Record<string, unknown> = { ...SESSION_LIST_PARAMS };
-  if (options.limit !== undefined && options.limit > 0) {
+  if (options.limit === undefined) {
+    params.limit = DEFAULT_SESSION_LIST_QUERY.limit;
+  } else if (options.limit > 0) {
     params.limit = Math.floor(options.limit);
   }
   if (options.includeGlobal !== undefined) {

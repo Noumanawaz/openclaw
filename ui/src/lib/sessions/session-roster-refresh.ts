@@ -20,6 +20,7 @@ import {
 } from "./session-key.ts";
 import {
   buildSessionListParams,
+  DEFAULT_SESSION_LIST_QUERY,
   requestSessionList,
   requestSessionListParams,
 } from "./session-requests.ts";
@@ -49,16 +50,12 @@ type ManagedSessionListRefresh = {
   invalidated?: true;
 };
 
-/** `limit: undefined` is an unbounded roster: it already holds every row, so it
- *  needs no retained window and never appends. */
-type ManagedSessionListQuery = Readonly<Record<string, unknown>> & {
-  readonly limit: number | undefined;
-};
+type ManagedSessionListQuery = Readonly<Record<string, unknown>> & { readonly limit: number };
 
 type ManagedSessionList = {
   key: string;
   query: ManagedSessionListQuery;
-  retainedLimit: number | undefined;
+  retainedLimit: number;
   connectionEpoch: number | null;
   snapshot: SessionListSnapshot;
   listeners: Set<(snapshot: SessionListSnapshot) => void>;
@@ -70,7 +67,9 @@ type ManagedSessionList = {
 function normalizeManagedSessionListQuery(options: SessionListOptions): ManagedSessionListQuery {
   const { offset: _offset, append: _append, ...queryOptions } = options;
   const limit =
-    typeof options.limit === "number" && options.limit > 0 ? Math.floor(options.limit) : undefined;
+    typeof options.limit === "number" && options.limit > 0
+      ? Math.floor(options.limit)
+      : DEFAULT_SESSION_LIST_QUERY.limit;
   return Object.freeze({ ...buildSessionListParams({ ...queryOptions, limit }), limit });
 }
 
@@ -142,11 +141,10 @@ function retainSessionPaginationWindow(
       ? offset + result.sessions.length
       : nextResult.sessions.length;
   // Retain the shared pagination window, excluding owner rows merged ahead of it.
-  // An unbounded roster already holds every row, so it has no window to retain.
-  if (options.limit === undefined) {
-    return options;
-  }
-  return { ...options, limit: Math.max(options.limit, retainedListLimit) };
+  return {
+    ...options,
+    limit: Math.max(options.limit ?? DEFAULT_SESSION_LIST_QUERY.limit, retainedListLimit),
+  };
 }
 
 export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
@@ -216,10 +214,9 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
     const drain = async () => {
       let next: ManagedSessionListRefresh | null = refresh;
       while (next && isCurrent()) {
-        const windowLimit = next.append ? entry.query.limit : entry.retainedLimit;
         const requestParams = {
           ...entry.query,
-          ...(windowLimit === undefined ? {} : { limit: windowLimit }),
+          limit: next.append ? entry.query.limit : entry.retainedLimit,
           ...(next.append && next.offset !== undefined ? { offset: next.offset } : {}),
         };
         publishManagedList(entry, { ...entry.snapshot, loading: true, error: null });
@@ -234,7 +231,7 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
               ? appendSessionResults(previous, result)
               : reconcileRosterPresentationMetadata(result, previous);
           const decorated = host.decorate(nextResult);
-          if (decorated && entry.retainedLimit !== undefined) {
+          if (decorated) {
             entry.retainedLimit = Math.max(entry.retainedLimit, decorated.sessions.length);
           }
           entry.connectionEpoch = scope.epoch;

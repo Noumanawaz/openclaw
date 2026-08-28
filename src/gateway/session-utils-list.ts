@@ -70,6 +70,7 @@ import type {
  */
 const SESSIONS_LIST_YIELD_BATCH_SIZE = 10;
 
+const SESSIONS_LIST_DEFAULT_LIMIT = 100;
 const SESSIONS_LIST_TRANSCRIPT_FIELD_ROWS = 100;
 const SESSIONS_LIST_TRANSCRIPT_USAGE_MAX_BYTES = 64 * 1024;
 
@@ -443,6 +444,7 @@ function prepareSessionList(params: ListSessionsFromStoreParams) {
     opts,
     now,
     entryFilter,
+    defaultLimit: SESSIONS_LIST_DEFAULT_LIMIT,
     getRowContext:
       hasSpawnedByFilter || Boolean(normalizeOptionalString(opts.search))
         ? getRowContext

@@ -461,7 +461,7 @@ class SessionsPage extends OpenClawLightDomElement {
     return sessionsPageListQuery(context, {
       activeMinutes: parseStrictPositiveInteger(this.activeMinutes),
       // The Limit box is an explicit page size, so an unparseable entry falls
-      // back to the page default rather than silently requesting every session.
+      // back to the page default rather than to the shared roster page size.
       limit: parseStrictPositiveInteger(this.limit) ?? SESSIONS_PAGE_DEFAULT_LIMIT,
       includeGlobal: this.includeGlobal,
       includeUnknown: this.includeUnknown,
