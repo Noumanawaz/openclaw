@@ -56,11 +56,13 @@ describe("dashboards route", () => {
     await loadDashboards(context, loaderOptions);
 
     expect(refreshList).toHaveBeenCalledWith({
+      limit: SIDEBAR_SESSION_ROSTER_LIMIT,
       boardFace: "dashboard",
       archivedFilter: "all",
       force: true,
     });
     expect(listSnapshot).toHaveBeenLastCalledWith({
+      limit: SIDEBAR_SESSION_ROSTER_LIMIT,
       boardFace: "dashboard",
       archivedFilter: "all",
     });
