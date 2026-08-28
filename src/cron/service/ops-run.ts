@@ -259,18 +259,10 @@ async function finishPreparedManualRun(
       emitMissingTerminal(true);
       return;
     }
-    if (!isCronActiveJobMarkerCurrent(prepared.activeJobMarker)) {
-      emitMissingTerminal();
-      return;
-    }
-
     let notifySetupTimeout = coreResult.isolatedAgentSetupTimeout !== undefined;
     await locked(state, async () => {
-      await ensureLoaded(state, { skipRecompute: true });
-      if (
-        !isCronActiveJobMarkerCurrent(prepared.activeJobMarker) ||
-        prepared.activeJobMarker?.jobRemoved === true
-      ) {
+      await ensureLoaded(state, { forceReload: true, skipRecompute: true });
+      if (prepared.activeJobMarker?.jobRemoved === true) {
         notifySetupTimeout = false;
         return;
       }
@@ -279,10 +271,6 @@ async function finishPreparedManualRun(
         return;
       }
       const postPersistNotifications: DeferredCronNotifications = [];
-      if (!isCronActiveJobMarkerCurrent(prepared.activeJobMarker)) {
-        notifySetupTimeout = false;
-        return;
-      }
       if (triggerSkipped) {
         tryFinishCronTaskRunWithoutHistory(state, {
           taskRunId,
@@ -368,6 +356,12 @@ async function finishPreparedManualRun(
           committed.removed ? [jobId] : [],
           { publish: false },
         );
+        // Retirement stops live publication, not the exact receipt's durable
+        // completion. Manual force runs retain their reservation-time schedule owner.
+        if (!isCronActiveJobMarkerCurrent(prepared.activeJobMarker)) {
+          finalized = true;
+          return;
+        }
         if (!triggerSkipped) {
           emitCronRunFinished(
             state,
@@ -419,7 +413,10 @@ async function finishPreparedManualRun(
         applyCronRuntimeRowsToState(state, maintenance.jobs);
       } catch (error) {
         if (error instanceof CronRunReceiptRevisionError) {
-          supersedeReason = error.message;
+          // A retired reservation cannot clear a successor's same-millisecond marker.
+          if (isCronActiveJobMarkerCurrent(prepared.activeJobMarker)) {
+            supersedeReason = error.message;
+          }
           notifySetupTimeout = false;
           return;
         }
@@ -447,7 +444,7 @@ async function finishPreparedManualRun(
         isolatedAgentSetupTimeout: coreResult.isolatedAgentSetupTimeout,
       });
     }
-    if (finalized) {
+    if (finalized && isCronActiveJobMarkerCurrent(prepared.activeJobMarker)) {
       armTimer(state);
     }
     emitMissingTerminal();
