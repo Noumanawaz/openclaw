@@ -85,6 +85,8 @@ const CURRENT_TRAIN_METHODS = [
   "plugins.inspect",
   "device.pair.setupStatus",
   "sessions.patchMany",
+  "sessions.goal.update",
+  "sessions.goal.clear",
   "sessions.groups.update",
   "sessions.groups.defaults",
   "sessions.recover",
