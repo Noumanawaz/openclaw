@@ -33,7 +33,6 @@ import {
   loadInstalledPluginIndexInstallRecords,
   loadInstalledPluginIndexInstallRecordsSync,
 } from "../plugins/installed-plugin-index-records.js";
-import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
 import { bumpSkillsSnapshotVersion } from "../skills/runtime/refresh-state.js";
 import { createConfigAppliedRevisionTracker } from "./config-applied-revision.js";
 import { diffConfigPaths, diffGatewayReloadPaths } from "./config-diff.js";
@@ -668,10 +667,8 @@ export function startGatewayConfigReloader(opts: {
       }
       notifyCommitted();
     };
-    // A signaled metadata change emptied the process snapshot slot. An
-    // unchanged config diff must still replace the plugin runtime generation so
-    // the slot republishes instead of leaving configless readers cold-scanning
-    // against a registry that diverged from the live runtime owners.
+    // Plugin metadata belongs to Gateway startup. A signal must request a restart
+    // even when config bytes and install records have not changed.
     const pluginMetadataRefreshToken = pluginMetadataRefreshRequests;
     const forcePluginMetadataReload = pluginMetadataRefreshToken !== pluginMetadataRefreshApplied;
     const markPluginMetadataRefreshApplied = () => {
@@ -718,7 +715,7 @@ export function startGatewayConfigReloader(opts: {
     opts.log.info(
       changedPaths.length > 0
         ? `config change detected; evaluating reload (${changedPaths.join(", ")})`
-        : "plugin metadata changed with identical config; replacing plugin runtime generation",
+        : "plugin metadata changed with identical config; Gateway restart required",
     );
     if (followUp.mode === "none") {
       opts.log.info(`config reload skipped by writer intent (${followUp.reason})`);
@@ -731,11 +728,9 @@ export function startGatewayConfigReloader(opts: {
       forceChangedPaths: pluginInstallWholeRecordPaths,
       candidateConfig: nextConfig,
     });
-    if (forcePluginMetadataReload && !plan.restartGateway && !plan.reloadPlugins) {
-      // Mirror the `plugins.*` hot rule pairing: a replaced plugin registry
-      // also invalidates MCP runtimes assembled from the previous generation.
-      plan.reloadPlugins = true;
-      plan.disposeMcpRuntimes = true;
+    if (forcePluginMetadataReload && !plan.restartGateway) {
+      plan.restartGateway = true;
+      plan.restartReasons.push("plugin metadata changed");
     }
     if (nextSettings.mode === "off") {
       opts.log.info("config reload disabled (gateway.reload.mode=off)");
@@ -789,10 +784,6 @@ export function startGatewayConfigReloader(opts: {
     await appliedRevision.apply(plan, nextConfig, nextConfigRevisionHash);
     await commitReloadBaseline();
     application?.settle(applicationStatus);
-    if (plan.reloadPlugins) {
-      // The committed reload republished the metadata snapshot generation.
-      markPluginMetadataRefreshApplied();
-    }
   };
 
   const promoteAcceptedSnapshot = async (snapshot: ConfigFileSnapshot, reason: string) => {
@@ -1356,11 +1347,10 @@ export function startGatewayConfigReloader(opts: {
 
   return {
     notifyPluginMetadataChanged: () => {
-      // The signal carries a metadata change while config bytes stay identical.
-      // Clear both metadata and config-echo caches before scheduling the shared diff path.
+      // Keep the running inventory intact; only the next Gateway startup may
+      // discover changed plugin artifacts. Refresh install records for restart planning.
       pluginMetadataRefreshRequests += 1;
       clearLoadInstalledPluginIndexInstallRecordsCache();
-      clearPluginMetadataLifecycleCaches();
       startupInternalWriteHash = null;
       lastAppliedWriteHash = null;
       scheduleExternalRefresh();
