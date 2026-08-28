@@ -36,13 +36,12 @@ export function resolvePluginLoadDiscovery(params: {
   onlyPluginIdSet: ReadonlySet<string> | null;
   emitWarning: boolean;
   warningCacheKey: string;
-  suppliedManifestRegistry?: PluginManifestRegistry;
 }): ResolvedPluginLoadDiscovery {
   const { options, context } = params;
-  // The load context has already verified workspace, environment, config, and
-  // plugin scope against the current lifecycle-owned metadata generation.
+  // Explicit manifests belong to the caller. Implicit current metadata is borrowed only
+  // after the load context verifies workspace, environment, config, and plugin scope.
   const suppliedManifestRegistry =
-    params.suppliedManifestRegistry ??
+    options.manifestRegistry ??
     (options.discovery === undefined ? context.metadataSnapshot?.manifestRegistry : undefined);
   const discovery = suppliedManifestRegistry
     ? {

@@ -6,6 +6,7 @@
 import type { LegacyConfigRule } from "../../config/legacy.shared.js";
 import type { OpenClawConfig } from "../../config/types.js";
 import { listPluginDoctorLegacyConfigRules } from "../../plugins/doctor-contract-registry.js";
+import type { PluginManifestRegistry } from "../../plugins/manifest-registry.js";
 import { isChannelConfigMetadataKey } from "../config-metadata.js";
 import { getBootstrapChannelPlugin } from "./bootstrap-registry.js";
 import { loadBundledChannelDoctorContractApi } from "./doctor-contract-api.js";
@@ -86,6 +87,7 @@ export function collectChannelLegacyConfigRules(
   raw?: unknown,
   touchedPaths?: ReadonlyArray<ReadonlyArray<string>>,
   excludedChannelIds?: ReadonlySet<ChannelId>,
+  manifestRegistry?: Pick<PluginManifestRegistry, "plugins">,
 ): LegacyConfigRule[] {
   const channelIds = collectRelevantChannelIdsForTouchedPaths({
     raw,
@@ -120,6 +122,7 @@ export function collectChannelLegacyConfigRules(
       ...listPluginDoctorLegacyConfigRules({
         config: raw as OpenClawConfig,
         pluginIds: unresolvedChannelIds,
+        ...(manifestRegistry ? { manifestRegistry } : {}),
       }),
     );
   }

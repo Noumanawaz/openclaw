@@ -59,6 +59,14 @@ type PluginDoctorStateMigrationEntry = {
 
 type PluginManifestRegistryRecord = PluginManifestRegistry["plugins"][number];
 
+type PluginDoctorRegistryOptions = {
+  config?: OpenClawConfig;
+  workspaceDir?: string;
+  env?: NodeJS.ProcessEnv;
+  pluginIds?: readonly string[];
+  manifestRegistry?: Pick<PluginManifestRegistry, "plugins">;
+};
+
 function loadPluginDoctorContractModule(params: {
   modulePath: string;
   rootDir: string;
@@ -235,6 +243,7 @@ function collectRelevantDoctorPluginIdsForTouchedPaths(params: {
 export function collectDoctorConfigRepairPluginIds(
   raw: unknown,
   touchedPaths?: ReadonlyArray<ReadonlyArray<string>>,
+  manifestRegistry?: Pick<PluginManifestRegistry, "plugins">,
 ): string[] {
   const config = asNullableRecord(raw);
   if (!config) {
@@ -245,10 +254,12 @@ export function collectDoctorConfigRepairPluginIds(
       ? collectRelevantDoctorPluginIdsForTouchedPaths({ raw, touchedPaths })
       : collectRelevantDoctorPluginIds(raw),
   );
-  const registry = loadPluginManifestRegistryForPluginRegistry({
-    config,
-    includeDisabled: true,
-  });
+  const registry =
+    manifestRegistry ??
+    loadPluginManifestRegistryForPluginRegistry({
+      config,
+      includeDisabled: true,
+    });
   for (const plugin of registry.plugins) {
     if (
       hasPluginConfigMigrationSource({
@@ -289,23 +300,22 @@ function loadPluginDoctorContractEntry(
   };
 }
 
-function resolvePluginDoctorManifestRecords(params: {
-  config?: OpenClawConfig;
-  workspaceDir?: string;
-  env?: NodeJS.ProcessEnv;
-  pluginIds?: readonly string[];
-}): PluginManifestRegistryRecord[] {
+function resolvePluginDoctorManifestRecords(
+  params: PluginDoctorRegistryOptions,
+): PluginManifestRegistryRecord[] {
   const env = params?.env ?? process.env;
   if (params?.pluginIds && params.pluginIds.length === 0) {
     return [];
   }
 
-  const manifestRegistry = loadPluginManifestRegistryForPluginRegistry({
-    config: params?.config,
-    workspaceDir: params?.workspaceDir,
-    env,
-    includeDisabled: true,
-  });
+  const manifestRegistry =
+    params.manifestRegistry ??
+    loadPluginManifestRegistryForPluginRegistry({
+      config: params?.config,
+      workspaceDir: params?.workspaceDir,
+      env,
+      includeDisabled: true,
+    });
 
   const scopedPluginIds = params?.pluginIds ? new Set(params.pluginIds) : null;
   return manifestRegistry.plugins.filter(
@@ -321,13 +331,9 @@ function resolvePluginDoctorManifestRecords(params: {
   );
 }
 
-function resolvePluginDoctorContracts(params: {
-  surface: PluginDoctorContractSurface;
-  config?: OpenClawConfig;
-  workspaceDir?: string;
-  env?: NodeJS.ProcessEnv;
-  pluginIds?: readonly string[];
-}): PluginDoctorContractEntry[] {
+function resolvePluginDoctorContracts(
+  params: PluginDoctorRegistryOptions & { surface: PluginDoctorContractSurface },
+): PluginDoctorContractEntry[] {
   return loadPluginDoctorContractEntries({
     records: resolvePluginDoctorManifestRecords(params),
     surface: params.surface,
@@ -353,24 +359,18 @@ function loadPluginDoctorContractEntries(params: {
 
   return entries;
 }
-export function listPluginDoctorLegacyConfigRules(params?: {
-  config?: OpenClawConfig;
-  workspaceDir?: string;
-  env?: NodeJS.ProcessEnv;
-  pluginIds?: readonly string[];
-}): LegacyConfigRule[] {
+export function listPluginDoctorLegacyConfigRules(
+  params?: PluginDoctorRegistryOptions,
+): LegacyConfigRule[] {
   return resolvePluginDoctorContracts({
     ...params,
     surface: "configRepair",
   }).flatMap((entry) => entry.rules);
 }
 
-export function listPluginDoctorSessionRouteStateOwners(params?: {
-  config?: OpenClawConfig;
-  workspaceDir?: string;
-  env?: NodeJS.ProcessEnv;
-  pluginIds?: readonly string[];
-}): DoctorSessionRouteStateOwner[] {
+export function listPluginDoctorSessionRouteStateOwners(
+  params?: PluginDoctorRegistryOptions,
+): DoctorSessionRouteStateOwner[] {
   const owners = new Map<string, DoctorSessionRouteStateOwner>();
   const records = resolvePluginDoctorManifestRecords(params ?? {});
   const manifestOwners = records.flatMap((record) => record.sessionRouteStateOwners ?? []);
@@ -387,12 +387,9 @@ export function listPluginDoctorSessionRouteStateOwners(params?: {
 }
 
 /** Resolve plugin-owned agent IDs whose core session stores need migration. */
-export function listPluginDoctorSessionStoreAgentIds(params?: {
-  config?: OpenClawConfig;
-  workspaceDir?: string;
-  env?: NodeJS.ProcessEnv;
-  pluginIds?: readonly string[];
-}): string[] {
+export function listPluginDoctorSessionStoreAgentIds(
+  params?: PluginDoctorRegistryOptions,
+): string[] {
   const cfg = params?.config ?? {};
   const agentIds = new Set<string>();
   for (const entry of resolvePluginDoctorContracts({
@@ -452,12 +449,9 @@ function loadLegacyChannelStateMigrationDetector(
   }
 }
 
-export function listPluginDoctorStateMigrationEntries(params?: {
-  config?: OpenClawConfig;
-  workspaceDir?: string;
-  env?: NodeJS.ProcessEnv;
-  pluginIds?: readonly string[];
-}): PluginDoctorStateMigrationEntry[] {
+export function listPluginDoctorStateMigrationEntries(
+  params?: PluginDoctorRegistryOptions,
+): PluginDoctorStateMigrationEntry[] {
   const entries: PluginDoctorStateMigrationEntry[] = [];
   const normalizedConfig = normalizePluginsConfig(params?.config?.plugins);
   for (const record of resolvePluginDoctorManifestRecords(params ?? {})) {

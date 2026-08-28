@@ -159,10 +159,7 @@ describe("resolvePluginRuntimeLoadContext", () => {
       env,
       workspaceDir: undefined,
     });
-    expect(resolveConfigWidePluginManifestRegistryMock).toHaveBeenCalledWith({
-      config: rawConfig,
-      env,
-    });
+    expect(resolveConfigWidePluginManifestRegistryMock).not.toHaveBeenCalled();
   });
 
   it("reuses a prepared metadata snapshot without resolving metadata again", () => {

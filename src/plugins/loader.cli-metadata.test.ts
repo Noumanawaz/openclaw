@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
+import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   defineBundledChannelEntry,
   type OpenClawPluginApi,
@@ -27,6 +28,63 @@ afterAll(() => {
 });
 
 describe("plugin loader CLI metadata", () => {
+  it("honors an explicit empty manifest registry without discovering excluded CLI code", async () => {
+    useNoBundledPlugins();
+    const plugin = writePlugin({
+      id: "outside-operation",
+      filename: "outside-operation.cjs",
+      body: `module.exports = { id: "outside-operation", register(api) {
+        api.registerCli(() => {}, { commands: ["outside-operation"] });
+      } };`,
+    });
+    const registry = await loadOpenClawPluginCliRegistry({
+      config: { plugins: { load: { paths: [plugin.file] }, allow: [plugin.id] } },
+      manifestRegistry: { plugins: [], diagnostics: [] },
+    });
+    expect(registry.plugins.map((entry) => entry.id)).toEqual([]);
+    expect(registry.cliRegistrars).toEqual([]);
+  });
+
+  it.each(["selected", "other", undefined])(
+    "keeps CLI discovery in its selected workspace (owner: %s)",
+    async (owner) => {
+      useNoBundledPlugins();
+      const workspace = makePluginLoaderTempDir();
+      const otherWorkspace = makePluginLoaderTempDir();
+      const dir = path.join(otherWorkspace, ".openclaw", "extensions", "other-workspace-cli");
+      fs.mkdirSync(dir, { recursive: true });
+      writePlugin({
+        id: "other-workspace-cli",
+        dir,
+        filename: "index.cjs",
+        body: `module.exports = { id: "other-workspace-cli", register(api) {
+        api.registerCli(() => {}, { commands: ["other-workspace-cli"], descriptors: [{ name: "other-workspace-cli", description: "Other workspace", hasSubcommands: false }] });
+      } };`,
+      });
+      const cfg: OpenClawConfig = {
+        agents: {
+          ownership: "explicit",
+          ...(owner ? { defaults: { systemAgent: { agentId: owner } } } : {}),
+          entries: { selected: { workspace }, other: { workspace: otherWorkspace } },
+        },
+        plugins: { allow: ["other-workspace-cli"] },
+      };
+      const { createPluginCliLoadSession, loadPluginCliDescriptors, resolvePluginCliRootOwnerIds } =
+        await import("./cli-registry-loader.js");
+      const session = createPluginCliLoadSession();
+      const params = { cfg, session, primaryCommand: "other-workspace-cli" };
+      try {
+        const expected = owner === "other" ? ["other-workspace-cli"] : [];
+        expect(
+          (await loadPluginCliDescriptors(params)).map((descriptor) => descriptor.name),
+        ).toEqual(expected);
+        expect(await resolvePluginCliRootOwnerIds(params)).toEqual(expected);
+      } finally {
+        session.close();
+      }
+    },
+  );
+
   it.each([
     {
       id: "wrong-cli-channel-entry",

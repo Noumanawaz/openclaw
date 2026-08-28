@@ -91,19 +91,16 @@ const buildProgramMock = vi.hoisted(() => vi.fn());
 const getProgramContextMock = vi.hoisted(() => vi.fn(() => null));
 const registerCoreCliByNameMock = vi.hoisted(() => vi.fn());
 const registerSubCliByNameMock = vi.hoisted(() => vi.fn());
-const registerPluginCliCommandsFromValidatedConfigMock = vi.hoisted(() => vi.fn(async () => ({})));
+const registerPluginCliCommandsFromValidatedConfigMock = vi.hoisted(() =>
+  vi.fn<typeof import("../plugins/cli.js").registerPluginCliCommandsFromValidatedConfig>(
+    async () => ({}),
+  ),
+);
 const resolvePluginCliRootOwnerIdsMock = vi.hoisted(() => vi.fn());
 const loadPluginCliDescriptorsMock = vi.hoisted(() =>
-  vi.fn<
-    () => Promise<
-      Array<{
-        name: string;
-        description: string;
-        hasSubcommands: boolean;
-        machineOutput?: (params: { argv: readonly string[]; stdoutIsTTY: boolean }) => boolean;
-      }>
-    >
-  >(async () => []),
+  vi.fn<typeof import("../plugins/cli-registry-loader.js").loadPluginCliDescriptors>(
+    async () => [],
+  ),
 );
 const resolveManifestCommandAliasOwnerMock = vi.hoisted(() => vi.fn());
 const resolveManifestToolOwnerMock = vi.hoisted(() => vi.fn());
@@ -179,7 +176,7 @@ const createCliProgressMock = vi.hoisted(() =>
     done: progressDoneMock,
   })),
 );
-const loadConfigMock = vi.hoisted(() => vi.fn(() => ({})));
+const loadConfigMock = vi.hoisted(() => vi.fn((_options?: unknown) => ({})));
 const readSourceConfigBestEffortMock = vi.hoisted(() => vi.fn(async () => ({})));
 const startProxyMock = vi.hoisted(() =>
   vi.fn<(config: unknown) => Promise<unknown>>(async () => null),
@@ -402,6 +399,11 @@ vi.mock("../plugins/cli.js", () => ({
 }));
 
 vi.mock("../plugins/cli-registry-loader.js", () => ({
+  createPluginCliLoadSession: () => ({
+    resolve: vi.fn(),
+    readConfig: vi.fn((read: () => Promise<unknown>) => read()),
+    close: vi.fn(),
+  }),
   loadPluginCliDescriptors: loadPluginCliDescriptorsMock,
   resolvePluginCliRootOwnerIds: resolvePluginCliRootOwnerIdsMock,
 }));
@@ -461,7 +463,9 @@ vi.mock("./progress.js", () => ({
 }));
 
 vi.mock("../config/io.js", () => ({
-  readBestEffortConfig: loadConfigMock,
+  readBestEffortConfigSnapshot: async (options?: unknown) => ({
+    config: loadConfigMock(options),
+  }),
   readSourceConfigBestEffort: readSourceConfigBestEffortMock,
 }));
 
@@ -3138,7 +3142,7 @@ describe("runCli exit behavior", () => {
       program,
       undefined,
       undefined,
-      { mode: "lazy", primary: "workboard", skipPluginValidation: false },
+      expect.objectContaining({ mode: "lazy", primary: "workboard", skipPluginValidation: false }),
     );
     expect(program.parseAsync).not.toHaveBeenCalled();
   });
@@ -3256,6 +3260,52 @@ describe("runCli exit behavior", () => {
     expect(parseAsync).toHaveBeenCalledWith(argv);
   });
 
+  it("shares plugin preparation from output through both ownership checks and registration only within one invocation", async () => {
+    const { Command } = await vi.importActual<typeof import("commander")>("commander");
+    const runInvocation = async () => {
+      tryRouteCliMock.mockResolvedValueOnce(false);
+      const program = new Command();
+      vi.spyOn(program, "parseAsync").mockImplementation(async () => {
+        const session =
+          registerPluginCliCommandsFromValidatedConfigMock.mock.calls.at(-1)?.[3]?.session;
+        expect(session).toBeDefined();
+        expect(session!.close).toHaveBeenCalled();
+        return program;
+      });
+      buildProgramMock.mockReturnValueOnce(program);
+      registerPluginCliCommandsFromValidatedConfigMock.mockImplementationOnce(
+        async (registered) => {
+          registered.command("prepared");
+          return {};
+        },
+      );
+      await runCli(["node", "openclaw", "prepared", "--json"]);
+    };
+    resolvePluginCliRootOwnerIdsMock.mockResolvedValue(["prepared-cli"]);
+    try {
+      await runInvocation();
+      const session = loadPluginCliDescriptorsMock.mock.calls[0]?.[0].session;
+      expect(session).toBeDefined();
+      expect(session!.readConfig).toHaveBeenCalledOnce();
+      expect(vi.mocked(session!.readConfig).mock.invocationCallOrder[0]).toBeLessThan(
+        loadConfigMock.mock.invocationCallOrder[0]!,
+      );
+      expect(resolvePluginCliRootOwnerIdsMock.mock.calls).toHaveLength(2);
+      for (const [params] of resolvePluginCliRootOwnerIdsMock.mock.calls) {
+        expect(params.session).toBe(session);
+      }
+      expect(registerPluginCliCommandsFromValidatedConfigMock.mock.calls[0]?.[3]?.session).toBe(
+        session,
+      );
+      await runInvocation();
+      expect(loadPluginCliDescriptorsMock.mock.calls[1]?.[0].session).not.toBe(session);
+    } finally {
+      tryRouteCliMock.mockReset();
+      buildProgramMock.mockReset();
+      registerPluginCliCommandsFromValidatedConfigMock.mockReset().mockResolvedValue({});
+    }
+  });
+
   it("routes incidental logs to stderr throughout --json startup and dispatch", async () => {
     tryRouteCliMock.mockResolvedValueOnce(false);
     resolvePluginCliRootOwnerIdsMock.mockImplementation(
@@ -3282,7 +3332,7 @@ describe("runCli exit behavior", () => {
       expect.anything(),
       undefined,
       undefined,
-      { mode: "lazy", primary: "memory", skipPluginValidation: true },
+      expect.objectContaining({ mode: "lazy", primary: "memory", skipPluginValidation: true }),
     );
     expect(stderrDuringPluginRegistration).toBe(true);
     expect(stderrDuringParse).toBe(true);
@@ -3389,7 +3439,7 @@ describe("runCli exit behavior", () => {
       expect.anything(),
       undefined,
       undefined,
-      { mode: "lazy", primary: "memory", skipPluginValidation: false },
+      expect.objectContaining({ mode: "lazy", primary: "memory", skipPluginValidation: false }),
     );
     expect(stderrDuringPluginRegistration).toBe(false);
     expect(loggingState.forceConsoleToStderr).toBe(false);

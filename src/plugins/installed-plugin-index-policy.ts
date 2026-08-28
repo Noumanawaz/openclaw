@@ -1,8 +1,32 @@
 // Applies policy checks to installed plugin index records.
 import type { OpenClawConfig } from "../config/types.js";
 import { listPluginCompatRecords } from "./compat/registry.js";
-import { normalizePluginsConfig } from "./config-state.js";
+import { normalizePluginsConfig, resolveEffectiveEnableState } from "./config-state.js";
+import { isPluginEnabledByDefaultForPlatform } from "./default-enablement.js";
 import { hashJson } from "./installed-plugin-index-hash.js";
+import type { InstalledPluginIndex } from "./installed-plugin-index-types.js";
+
+/** Applies activation policy without refreshing source inventory or persistence metadata. */
+export function applyInstalledPluginIndexPolicy(
+  index: InstalledPluginIndex,
+  config: OpenClawConfig | undefined,
+): InstalledPluginIndex {
+  const normalizedConfig = normalizePluginsConfig(config?.plugins);
+  return {
+    ...index,
+    policyHash: resolveInstalledPluginIndexPolicyHash(config),
+    plugins: index.plugins.map((plugin) => ({
+      ...plugin,
+      enabled: resolveEffectiveEnableState({
+        id: plugin.pluginId,
+        origin: plugin.origin,
+        config: normalizedConfig,
+        rootConfig: config,
+        enabledByDefault: isPluginEnabledByDefaultForPlatform(plugin),
+      }).enabled,
+    })),
+  };
+}
 
 /** Hashes plugin compat registry state that can affect installed index validity. */
 export function resolveCompatRegistryVersion(): string {

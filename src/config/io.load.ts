@@ -21,7 +21,6 @@ import {
   warnOnConfigMiskeys,
 } from "./io.warnings.js";
 import { migrateLegacyContextBudgetConfig, migratePersistedImplicitMainRoster } from "./legacy.js";
-import { materializeRuntimeConfig } from "./materialize.js";
 import type { OpenClawConfig } from "./types.js";
 import { validateConfigObjectWithPlugins } from "./validation.js";
 
@@ -40,7 +39,9 @@ export function loadConfigFromContext(
       // same runtime defaults an empty {} config gets, or out-of-box behavior
       // (compaction safeguard, session/cron defaults) silently diverges.
       return context.finalizeLoadedRuntimeConfig(
-        materializeRuntimeConfig(coerceConfig(migratePersistedImplicitMainRoster({}).config)),
+        context
+          .createValidationPluginMetadataSnapshotLoader({ env: deps.env })
+          .materialize(coerceConfig(migratePersistedImplicitMainRoster({}).config)),
       );
     }
     const raw = deps.fs.readFileSync(configPath, "utf-8");
@@ -85,7 +86,6 @@ export function loadConfigFromContext(
       }
     }
     const pluginMetadata = context.createValidationPluginMetadataSnapshotLoader({
-      effectiveConfigRaw,
       env: deps.env,
     });
     const validated = validateConfigObjectWithPlugins(validationConfigRaw, {
@@ -146,9 +146,7 @@ export function loadConfigFromContext(
         return loadConfigFromContext(context, { skipSuspiciousRecovery: true });
       }
     }
-    const cfg = materializeRuntimeConfig(validated.config, {
-      manifestRegistry: pluginMetadata.getManifestRegistry(),
-    });
+    const cfg = pluginMetadata.materialize(validated.config);
     context.observeLoadConfigSnapshot(
       createConfigFileSnapshot({
         path: configPath,

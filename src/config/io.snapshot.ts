@@ -7,6 +7,7 @@ import { resolveManagedUnsetPathsForWrite } from "./config-path-mutation.js";
 import { ConfigIncludeError } from "./includes.js";
 import type { ConfigIoContext } from "./io.context.js";
 import { maybeRecoverSuspiciousConfigRead } from "./io.observe-recovery.js";
+import { projectConfigPluginMetadataForReadWrite } from "./io.plugin-metadata.js";
 import {
   coerceConfig,
   containsConfigIncludeDirective,
@@ -33,7 +34,6 @@ import type {
 } from "./io.types.js";
 import { warnIfConfigFromFuture } from "./io.warnings.js";
 import { migrateLegacyContextBudgetConfig, migratePersistedImplicitMainRoster } from "./legacy.js";
-import { materializeRuntimeConfig } from "./materialize.js";
 import { ConfigMutationConflictError } from "./mutation-conflict.js";
 import type { ConfigFileSnapshot, LegacyConfigIssue, OpenClawConfig } from "./types.js";
 import { validateConfigObjectWithPlugins } from "./validation.js";
@@ -63,6 +63,10 @@ export async function readConfigFileSnapshotInternal(
     const migrated = migratePersistedImplicitMainRoster({});
     const config = coerceConfig(migrated.config);
     const legacyIssues: LegacyConfigIssue[] = [];
+    const pluginMetadata = context.createValidationPluginMetadataSnapshotLoader({
+      env: deps.env,
+      allowCurrentPluginMetadata: options.allowCurrentPluginMetadata,
+    });
     return await finalizeReadConfigSnapshotInternalResult(deps, {
       snapshot: createConfigFileSnapshot({
         path: configPath,
@@ -74,15 +78,13 @@ export async function readConfigFileSnapshotInternal(
         // Missing config is the fresh-install default path: materialize the
         // same runtime defaults an existing empty {} config gets, so snapshot
         // consumers see identical out-of-box behavior either way.
-        runtimeConfig: materializeRuntimeConfig(config, {
-          manifestRegistry:
-            context.options.pluginValidation === "core-only" ? { plugins: [] } : undefined,
-        }),
+        runtimeConfig: pluginMetadata.materialize(config),
         hash: hashConfigRaw(null),
         issues: [],
         warnings: [],
         legacyIssues,
       }),
+      pluginMetadata: pluginMetadata.getMetadata(),
     });
   }
 
@@ -197,7 +199,6 @@ export async function readConfigFileSnapshotInternal(
     const snapshotHash = rawHash;
     fallbackSourceConfig = coerceConfig(effectiveConfigRaw);
     const pluginMetadata = context.createValidationPluginMetadataSnapshotLoader({
-      effectiveConfigRaw,
       env: deps.env,
       allowCurrentPluginMetadata: options.allowCurrentPluginMetadata,
     });
@@ -212,7 +213,11 @@ export async function readConfigFileSnapshotInternal(
     );
     if (!validated.ok) {
       const legacyIssues = await deps.measure("config.snapshot.read.legacy-issues", () =>
-        collectInvalidConfigLegacyIssues(effectiveConfigRaw, effectiveParsed),
+        collectInvalidConfigLegacyIssues(
+          effectiveConfigRaw,
+          effectiveParsed,
+          pluginMetadata.getMetadata(),
+        ),
       );
       // Invalid snapshots stay inspectable, but rejected env.vars must not become runtime state.
       restoreEnvChangesIfUnchanged({
@@ -295,11 +300,7 @@ export async function readConfigFileSnapshotInternal(
       }
     }
     const snapshotConfig = await deps.measure("config.snapshot.read.materialize", () =>
-      materializeRuntimeConfig(validated.config, {
-        manifestRegistry:
-          pluginMetadata.getSnapshot()?.manifestRegistry ??
-          (context.options.pluginValidation === "core-only" ? { plugins: [] } : undefined),
-      }),
+      pluginMetadata.materialize(validated.config),
     );
     return await deps.measure("config.snapshot.read.observe", () =>
       finalizeReadConfigSnapshotInternalResult(
@@ -327,7 +328,7 @@ export async function readConfigFileSnapshotInternal(
           envSnapshotForRestore: readResolution.envSnapshotForRestore,
           includeFileHashesForWrite,
           includeFileTargetsForWrite,
-          pluginMetadataSnapshot: pluginMetadata.getSnapshot(),
+          pluginMetadata: pluginMetadata.getMetadata(),
         },
         { observe: !callerRejectedSuspiciousRecovery },
       ),
@@ -394,19 +395,23 @@ export async function readConfigFileSnapshotWithPluginMetadataFromContext(
     recoverSuspicious: options.recoverSuspicious === true,
     allowSuspiciousRecovery: options.allowSuspiciousRecovery,
   });
-  let pluginMetadataSnapshot = result.pluginMetadataSnapshot;
-  if (!pluginMetadataSnapshot && result.snapshot.valid) {
-    const pluginMetadata = context.createValidationPluginMetadataSnapshotLoader({
-      effectiveConfigRaw: result.snapshot.sourceConfig,
+  let pluginMetadata = result.pluginMetadata;
+  if (!pluginMetadata && result.snapshot.valid) {
+    const loader = context.createValidationPluginMetadataSnapshotLoader({
       env: context.deps.env,
       allowCurrentPluginMetadata: options.allowCurrentPluginMetadata,
     });
-    pluginMetadata.load(result.snapshot.sourceConfig);
-    pluginMetadataSnapshot = pluginMetadata.getSnapshot();
+    loader.load(result.snapshot.sourceConfig);
+    pluginMetadata = loader.getMetadata();
   }
   return {
     snapshot: result.snapshot,
-    ...(pluginMetadataSnapshot ? { pluginMetadataSnapshot } : {}),
+    ...(pluginMetadata
+      ? {
+          pluginMetadata,
+          pluginMetadataSnapshot: projectConfigPluginMetadataForReadWrite(pluginMetadata),
+        }
+      : {}),
   };
 }
 
@@ -427,7 +432,7 @@ export async function readConfigFileSnapshotForWriteFromContext(
     snapshot: result.snapshot,
     writeOptions: {
       assertConfigPathForWrite,
-      basePluginMetadataSnapshot: result.pluginMetadataSnapshot,
+      basePluginMetadataSnapshot: projectConfigPluginMetadataForReadWrite(result.pluginMetadata),
       envSnapshotForRestore: result.envSnapshotForRestore,
       expectedConfigPath: context.configPath,
       ownedConfigPathForWrite: context.configPath,
@@ -452,14 +457,18 @@ export async function readBestEffortConfigSnapshotFromContext(
       },
     };
   }
+  const pluginMetadata = context.createValidationPluginMetadataSnapshotLoader({
+    metadata: result.pluginMetadata,
+    env: context.deps.env,
+  });
+  const config = context.finalizeLoadedRuntimeConfig(
+    pluginMetadata.materialize(result.snapshot.sourceConfig),
+  );
   return {
-    config: context.finalizeLoadedRuntimeConfig(
-      materializeRuntimeConfig(result.snapshot.sourceConfig, {
-        manifestRegistry: result.pluginMetadataSnapshot?.manifestRegistry,
-      }),
-    ),
+    config,
     sourceConfig: result.snapshot.sourceConfig,
     configDiagnostics: null,
+    pluginMetadata: pluginMetadata.getMetadata(),
   };
 }
 

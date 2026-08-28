@@ -1,6 +1,7 @@
 import type fs from "node:fs";
 import type JSON5 from "json5";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
+import type { ConfigPluginMetadata } from "./io.plugin-metadata.js";
 import type {
   ConfigWriteAfterWrite,
   RuntimeConfigSnapshotRefreshOptions,
@@ -138,11 +139,13 @@ export type ReadConfigFileSnapshotInternalResult = {
   envSnapshotForRestore?: Record<string, string | undefined>;
   includeFileHashesForWrite?: Record<string, string>;
   includeFileTargetsForWrite?: Record<string, string>;
-  pluginMetadataSnapshot?: PluginMetadataSnapshot;
+  pluginMetadata?: ConfigPluginMetadata;
 };
 
 export type ReadConfigFileSnapshotWithPluginMetadataResult = {
   snapshot: ConfigFileSnapshot;
+  pluginMetadata?: ConfigPluginMetadata;
+  /** Public read/write-only aggregate; executable consumers use pluginMetadata.workspaceSnapshots. */
   pluginMetadataSnapshot?: PluginMetadataSnapshot;
 };
 
@@ -150,6 +153,7 @@ export type BestEffortConfigSnapshot = {
   config: OpenClawConfig;
   sourceConfig: OpenClawConfig;
   configDiagnostics: { path: string; issues: ConfigValidationIssue[] } | null;
+  pluginMetadata?: ConfigPluginMetadata;
 };
 
 export type ConfigRecoveryCandidate = {

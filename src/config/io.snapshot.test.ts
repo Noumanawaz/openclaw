@@ -2,9 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import * as pluginDiscovery from "../plugins/discovery.js";
 import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { createConfigIoContext } from "./io.context.js";
+import * as configPluginMetadata from "./io.plugin-metadata.js";
 import {
   readConfigFileSnapshotFromContext,
   readConfigFileSnapshotWithPluginMetadataFromContext,
@@ -18,6 +20,7 @@ import {
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
 afterEach(() => {
+  vi.restoreAllMocks();
   clearPluginMetadataLifecycleCaches();
   closeOpenClawStateDatabaseForTest();
 });
@@ -89,7 +92,7 @@ describe("config snapshot plugin metadata", () => {
   it("loads metadata for an explicit valid missing-config read without changing plain reads", async () => {
     const root = tempDirs.make("openclaw-config-snapshot-metadata-");
     const context = createContext(root);
-    const loader = vi.spyOn(context, "createValidationPluginMetadataSnapshotLoader");
+    const loader = vi.spyOn(pluginDiscovery, "discoverOpenClawPlugins");
 
     const plainSnapshot = await readConfigFileSnapshotFromContext(context);
 
@@ -99,7 +102,7 @@ describe("config snapshot plugin metadata", () => {
     const result = await readConfigFileSnapshotWithPluginMetadataFromContext(context);
 
     expect(result.snapshot).toMatchObject({ exists: false, valid: true });
-    expect(loader).toHaveBeenCalledOnce();
+    expect(loader).toHaveBeenCalled();
     expect(result.pluginMetadataSnapshot?.configFingerprint).toMatch(/^[a-f0-9]{64}$/u);
     expect(result.pluginMetadataSnapshot?.index).toMatchObject({
       version: 1,
@@ -108,16 +111,22 @@ describe("config snapshot plugin metadata", () => {
     });
   });
 
-  it("does not invent plugin metadata for invalid snapshots", async () => {
-    const root = tempDirs.make("openclaw-config-snapshot-invalid-");
-    const context = createContext(root);
-    fs.writeFileSync(context.configPath, "{ invalid", "utf8");
-    const loader = vi.spyOn(context, "createValidationPluginMetadataSnapshotLoader");
+  it.each(["{ invalid", JSON.stringify({ gateway: { port: "invalid" } })])(
+    "does not invent plugin metadata for invalid snapshot %s",
+    async (raw) => {
+      const root = tempDirs.make("openclaw-config-snapshot-invalid-");
+      const context = createContext(root);
+      fs.writeFileSync(context.configPath, raw, "utf8");
+      // Doctor may discover repair manifests for parsed invalid config, but that
+      // does not authorize constructing config-validation metadata for the read.
+      const loader = vi.spyOn(configPluginMetadata, "resolveConfigWidePluginManifestRegistry");
 
-    const result = await readConfigFileSnapshotWithPluginMetadataFromContext(context);
+      const result = await readConfigFileSnapshotWithPluginMetadataFromContext(context);
 
-    expect(result.snapshot.valid).toBe(false);
-    expect(result.pluginMetadataSnapshot).toBeUndefined();
-    expect(loader).not.toHaveBeenCalled();
-  });
+      expect(result.snapshot.valid).toBe(false);
+      expect(result.pluginMetadata).toBeUndefined();
+      expect(result.pluginMetadataSnapshot).toBeUndefined();
+      expect(loader).not.toHaveBeenCalled();
+    },
+  );
 });

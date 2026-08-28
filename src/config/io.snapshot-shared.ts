@@ -1,3 +1,4 @@
+import type { PluginManifestRegistry } from "../plugins/manifest-registry.js";
 import { observeConfigSnapshot } from "./io.observe.js";
 import type { NormalizedConfigIoDeps, ReadConfigFileSnapshotInternalResult } from "./io.types.js";
 import { asResolvedSourceConfig, asRuntimeConfig } from "./materialize.js";
@@ -83,11 +84,12 @@ export async function finalizeReadConfigSnapshotInternalResult(
 export async function collectInvalidConfigLegacyIssues(
   raw: unknown,
   sourceRaw: unknown,
+  manifestRegistry?: Pick<PluginManifestRegistry, "plugins">,
 ): Promise<LegacyConfigIssue[]> {
   if (!raw || typeof raw !== "object") {
     return [];
   }
   const { findDoctorLegacyConfigIssues } =
     await import("../commands/doctor/shared/legacy-config-issues.js");
-  return findDoctorLegacyConfigIssues(raw, sourceRaw);
+  return findDoctorLegacyConfigIssues(raw, sourceRaw, undefined, manifestRegistry);
 }

@@ -1,90 +1,70 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { PluginManifestRecord } from "../plugins/manifest-registry.js";
-import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
+import fs from "node:fs";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import { resolveReadOnlyChannelPluginsForConfig } from "../channels/plugins/read-only.js";
+import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
+import { createConfigIoContext } from "./io.context.js";
+import { projectConfigPluginMetadataForReadWrite } from "./io.plugin-metadata.js";
 
-const mocks = vi.hoisted(() => ({
-  resolvePluginMetadataSnapshot: vi.fn(),
-  resolveConfigWidePluginManifestRegistry: vi.fn(),
-}));
-
-vi.mock("../plugins/plugin-metadata-snapshot.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../plugins/plugin-metadata-snapshot.js")>()),
-  resolvePluginMetadataSnapshot: mocks.resolvePluginMetadataSnapshot,
-}));
-
-vi.mock("./io.plugin-metadata.js", () => ({
-  resolveConfigWidePluginManifestRegistry: mocks.resolveConfigWidePluginManifestRegistry,
-}));
-
-const { resolveReadOnlyChannelPluginsForConfig } = await import("../channels/plugins/read-only.js");
-const { createConfigIoContext } = await import("./io.context.js");
-
-function manifestRecord(params: {
-  id: string;
-  source: string;
-  channels?: string[];
-}): PluginManifestRecord {
-  return {
-    id: params.id,
-    name: params.id,
-    description: "test plugin",
-    version: "1.0.0",
-    source: params.source,
-    origin: "workspace",
-    channels: params.channels ?? [],
-  } as PluginManifestRecord;
-}
+const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+afterEach(clearPluginMetadataLifecycleCaches);
 
 describe("config IO plugin metadata snapshots", () => {
-  beforeEach(() => {
-    mocks.resolvePluginMetadataSnapshot.mockReset();
-    mocks.resolveConfigWidePluginManifestRegistry.mockReset();
-  });
-
-  it("feeds merged workspace plugins to snapshot-backed read-only discovery", () => {
-    const primary = manifestRecord({ id: "primary", source: "/srv/ops/primary" });
-    const secondary = manifestRecord({
-      id: "research-chat-plugin",
-      source: "/srv/research/research-chat-plugin",
-      channels: ["research-chat"],
-    });
-    const primaryRegistry = { plugins: [primary], diagnostics: [] };
-    const mergedRegistry = { plugins: [primary, secondary], diagnostics: [] };
-    mocks.resolvePluginMetadataSnapshot.mockReturnValue({
-      plugins: primaryRegistry.plugins,
-      manifestRegistry: primaryRegistry,
-    } as unknown as PluginMetadataSnapshot);
-    mocks.resolveConfigWidePluginManifestRegistry.mockReturnValue(mergedRegistry);
+  it("keeps alternate-workspace read-only channels in the aggregate without widening workspace graphs", () => {
+    const root = fs.realpathSync(tempDirs.make("openclaw-config-wide-metadata-"));
+    for (const id of ["ops", "research"]) {
+      const pluginDir = path.join(root, id, ".openclaw", "extensions", id);
+      fs.mkdirSync(pluginDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(pluginDir, "index.cjs"),
+        'throw new Error("read-only discovery must not execute plugins");',
+      );
+      fs.writeFileSync(
+        path.join(pluginDir, "openclaw.plugin.json"),
+        JSON.stringify({
+          id,
+          channels: [`${id}-chat`],
+          configSchema: { type: "object", properties: {} },
+          channelConfigs: {
+            [`${id}-chat`]: {
+              schema: { type: "object", properties: { enabled: { type: "boolean" } } },
+            },
+          },
+        }),
+      );
+    }
+    const env = {
+      HOME: root,
+      OPENCLAW_STATE_DIR: path.join(root, "state"),
+      OPENCLAW_DISABLE_BUNDLED_PLUGINS: "1",
+    };
     const cfg = {
       agents: {
         ownership: "explicit" as const,
         entries: {
-          ops: { workspace: "/srv/ops" },
-          research: { workspace: "/srv/research" },
+          ops: { workspace: path.join(root, "ops") },
+          research: { workspace: path.join(root, "research") },
         },
       },
       channels: { "research-chat": { enabled: true } },
-      plugins: {
-        allow: ["research-chat-plugin"],
-        entries: { "research-chat-plugin": { enabled: true } },
-      },
+      plugins: { allow: ["ops", "research"], entries: { research: { enabled: true } } },
     };
-    const context = createConfigIoContext({ env: {}, observe: false });
-    const loader = context.createValidationPluginMetadataSnapshotLoader({
-      effectiveConfigRaw: cfg,
-      env: {},
-    });
+    const context = createConfigIoContext({ env, observe: false });
+    const loader = context.createValidationPluginMetadataSnapshotLoader({ env });
     loader.load(cfg);
-    const snapshot = loader.getSnapshot();
-
-    expect(snapshot?.plugins).toEqual(mergedRegistry.plugins);
-    expect(snapshot?.byPluginId.get("research-chat-plugin")).toBe(secondary);
-    expect(loader.getSnapshot()).toBe(snapshot);
+    const metadata = loader.getMetadata()!;
+    expect(metadata.plugins.map(({ id }) => id)).toEqual(["ops", "research"]);
     expect(
-      resolveReadOnlyChannelPluginsForConfig(cfg, {
-        env: {},
-        metadataSnapshot: snapshot,
-      }).plugins.map((plugin) => plugin.id),
+      metadata.workspaceSnapshots.map((snapshot) => snapshot.plugins.map(({ id }) => id)),
+    ).toEqual([["ops"], ["research"]]);
+    expect(loader.getMetadata()).toBe(metadata);
+    const aggregate = projectConfigPluginMetadataForReadWrite(metadata);
+    expect(aggregate?.byPluginId.has("research")).toBe(true);
+    expect(
+      resolveReadOnlyChannelPluginsForConfig(cfg, { env, metadataSnapshot: aggregate }).plugins.map(
+        ({ id }) => id,
+      ),
     ).toContain("research-chat");
   });
 });

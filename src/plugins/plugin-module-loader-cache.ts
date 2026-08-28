@@ -13,7 +13,8 @@ import { installOpenClawInternalCorePackageNativeResolver } from "./plugin-sdk-n
 import {
   buildPluginLoaderJitiOptions,
   createPluginLoaderModuleCacheKey,
-  resolvePluginLoaderModuleConfig,
+  preparePluginLoaderAliases,
+  resolvePluginLoaderTryNative,
   type PluginSdkResolutionPreference,
 } from "./sdk-alias.js";
 
@@ -37,14 +38,6 @@ type ResolvePluginModuleLoaderCacheEntryParams = {
   cacheScopeKey?: string;
   sharedCacheScopeKey?: string;
   transformOpenClawDependencies?: boolean;
-};
-type PluginModuleLoaderCacheEntry = {
-  loaderFilename: string;
-  aliasMap: Record<string, string>;
-  tryNative: boolean;
-  transformOpenClawDependencies: boolean;
-  cacheKey: string;
-  scopedCacheKey: string;
 };
 type PluginModuleLoaderStatsSnapshot = {
   calls: number;
@@ -145,66 +138,9 @@ function toSourceTransformImportPath(specifier: string): string {
   return toSafeImportPath(specifier);
 }
 
-function resolveDefaultPluginModuleLoaderConfig(
-  params: ResolvePluginModuleLoaderCacheEntryParams,
-): ReturnType<typeof resolvePluginLoaderModuleConfig> {
-  return resolvePluginLoaderModuleConfig({
-    modulePath: params.modulePath,
-    argv1: params.argvEntry ?? process.argv[1],
-    moduleUrl: params.importerUrl,
-    devSourceRoot: params.devSourceRoot,
-    ...(params.preferBuiltDist ? { preferBuiltDist: true } : {}),
-    ...(params.pluginSdkResolution ? { pluginSdkResolution: params.pluginSdkResolution } : {}),
-  });
-}
-
-function resolvePluginModuleLoaderCacheEntry(
-  params: ResolvePluginModuleLoaderCacheEntryParams,
-): PluginModuleLoaderCacheEntry {
-  const loaderFilename = toSafeImportPath(params.loaderFilename ?? params.modulePath);
-  const hasAliasOverride = Boolean(params.aliasMap);
-  const hasTryNativeOverride = typeof params.tryNative === "boolean";
-  const defaultConfig =
-    hasAliasOverride || hasTryNativeOverride
-      ? resolveDefaultPluginModuleLoaderConfig(params)
-      : null;
-  const canReuseDefaultCacheKey =
-    defaultConfig !== null &&
-    (!hasAliasOverride || params.aliasMap === defaultConfig.aliasMap) &&
-    (!hasTryNativeOverride || params.tryNative === defaultConfig.tryNative);
-  const resolved = defaultConfig
-    ? {
-        tryNative: params.tryNative ?? defaultConfig.tryNative,
-        aliasMap: params.aliasMap ?? defaultConfig.aliasMap,
-        cacheKey: canReuseDefaultCacheKey ? defaultConfig.cacheKey : undefined,
-      }
-    : resolveDefaultPluginModuleLoaderConfig(params);
-  const { tryNative, aliasMap } = resolved;
-  const moduleConfigCacheKey =
-    resolved.cacheKey ??
-    createPluginLoaderModuleCacheKey({
-      tryNative,
-      aliasMap,
-    });
-  const transformOpenClawDependencies = params.transformOpenClawDependencies ?? tryNative;
-  const cacheKey = `${moduleConfigCacheKey}\0transform-openclaw=${transformOpenClawDependencies ? "1" : "0"}`;
-  const scopedCacheKey = `${loaderFilename}::${
-    params.sharedCacheScopeKey ??
-    (params.cacheScopeKey ? `${params.cacheScopeKey}::${cacheKey}` : cacheKey)
-  }`;
-  return {
-    loaderFilename,
-    aliasMap,
-    tryNative,
-    transformOpenClawDependencies,
-    cacheKey,
-    scopedCacheKey,
-  };
-}
-
 function createLazySourceTransformLoader(params: {
   loaderFilename: string;
-  aliasMap: Record<string, string>;
+  getAliasMap: () => Record<string, string>;
   transformOpenClawDependencies: boolean;
   createLoader?: PluginModuleLoaderFactory;
 }): () => PluginModuleLoader {
@@ -213,13 +149,15 @@ function createLazySourceTransformLoader(params: {
     if (loadWithSourceTransform) {
       return loadWithSourceTransform;
     }
-    const jitiOptions = buildPluginLoaderJitiOptions(params.aliasMap, {
+    const jitiOptions = buildPluginLoaderJitiOptions(params.getAliasMap(), {
       modulePath: params.loaderFilename,
     });
     const jitiLoader = (params.createLoader ?? loadCreateJitiLoaderFactory())(
       params.loaderFilename,
       {
         ...jitiOptions,
+        // A declined native require can leave ESM dependencies in flight; the
+        // fallback must transform the entry and its OpenClaw dependencies.
         nativeModules: params.transformOpenClawDependencies
           ? jitiOptions.nativeModules.filter((moduleName) => moduleName !== "openclaw")
           : jitiOptions.nativeModules,
@@ -231,37 +169,33 @@ function createLazySourceTransformLoader(params: {
   };
 }
 
-function createPluginModuleLoader(params: {
-  loaderFilename: string;
-  aliasMap: Record<string, string>;
-  tryNative: boolean;
-  transformOpenClawDependencies: boolean;
-  createLoader?: PluginModuleLoaderFactory;
-}): PluginModuleLoader {
-  // A declined native require can leave an ESM dependency in flight. The
-  // fallback must transform both the entry and OpenClaw SDK dependencies.
-  const getLoadWithSourceTransform = createLazySourceTransformLoader({
-    ...params,
-  });
-  const loadedTargetExports = new Map<string, unknown>();
-  const loadCachedTarget = (target: string, load: () => unknown): unknown => {
-    if (loadedTargetExports.has(target)) {
-      return loadedTargetExports.get(target);
+function cacheModuleExports(load: PluginModuleLoader): PluginModuleLoader {
+  const exports = new Map<string, unknown>();
+  return (target) => {
+    if (exports.has(target)) {
+      return exports.get(target);
     }
-    const loaded = load();
-    loadedTargetExports.set(target, loaded);
-    return loaded;
+    const result = load(target);
+    exports.set(target, result);
+    return result;
   };
+}
+
+function createPluginModuleLoader(params: {
+  aliasMap: Record<string, string> | ((specifier: string) => string | undefined);
+  tryNative: boolean;
+  getLoadWithSourceTransform: () => PluginModuleLoader;
+}): PluginModuleLoader {
+  const { getLoadWithSourceTransform } = params;
   // When the caller has explicitly opted out of native loading, route every
   // target through jiti so caller-provided alias rewrites still apply.
   if (!params.tryNative) {
-    return (target) =>
-      loadCachedTarget(target, () => {
-        pluginModuleLoaderStats.calls += 1;
-        pluginModuleLoaderStats.sourceTransformForced += 1;
-        recordSourceTransformTarget(target);
-        return getLoadWithSourceTransform()(target);
-      });
+    return cacheModuleExports((target) => {
+      pluginModuleLoaderStats.calls += 1;
+      pluginModuleLoaderStats.sourceTransformForced += 1;
+      recordSourceTransformTarget(target);
+      return getLoadWithSourceTransform()(target);
+    });
   }
   // Otherwise prefer native require() for already-compiled JS artifacts
   // (the bundled plugin public surfaces shipped in dist/). jiti's transform
@@ -270,23 +204,22 @@ function createPluginModuleLoader(params: {
   // for TS / TSX sources and for the small set of require(esm) /
   // async-module fallbacks `tryNativeRequireJavaScriptModule` declines to
   // handle.
-  return (target) =>
-    loadCachedTarget(target, () => {
-      pluginModuleLoaderStats.calls += 1;
-      const native = tryNativeRequireJavaScriptModule(target, {
-        allowWindows: true,
-        aliasMap: params.aliasMap,
-        fallbackOnMissingDependency: true,
-      });
-      if (native.ok) {
-        pluginModuleLoaderStats.nativeHits += 1;
-        return native.moduleExport;
-      }
-      pluginModuleLoaderStats.nativeMisses += 1;
-      pluginModuleLoaderStats.sourceTransformFallbacks += 1;
-      recordSourceTransformTarget(target);
-      return getLoadWithSourceTransform()(target);
+  return cacheModuleExports((target) => {
+    pluginModuleLoaderStats.calls += 1;
+    const native = tryNativeRequireJavaScriptModule(target, {
+      allowWindows: true,
+      aliasMap: params.aliasMap,
+      fallbackOnMissingDependency: true,
     });
+    if (native.ok) {
+      pluginModuleLoaderStats.nativeHits += 1;
+      return native.moduleExport;
+    }
+    pluginModuleLoaderStats.nativeMisses += 1;
+    pluginModuleLoaderStats.sourceTransformFallbacks += 1;
+    recordSourceTransformTarget(target);
+    return getLoadWithSourceTransform()(target);
+  });
 }
 
 export function getCachedPluginModuleLoader(
@@ -295,22 +228,57 @@ export function getCachedPluginModuleLoader(
     createLoader?: PluginModuleLoaderFactory;
   },
 ): PluginModuleLoader {
-  const cacheEntry = resolvePluginModuleLoaderCacheEntry(params);
-  const cached = params.cache.get(cacheEntry.scopedCacheKey);
+  const loaderFilename = toSafeImportPath(params.loaderFilename ?? params.modulePath);
+  const aliasMap = params.aliasMap;
+  const tryNative = params.tryNative ?? resolvePluginLoaderTryNative(params.modulePath, params);
+  const aliases = aliasMap
+    ? {
+        getAliasMap: () => aliasMap,
+        resolveAlias: (specifier: string) => aliasMap[specifier],
+        get cacheKey() {
+          return createPluginLoaderModuleCacheKey({ tryNative, aliasMap });
+        },
+      }
+    : preparePluginLoaderAliases({
+        modulePath: params.modulePath,
+        argv1: params.argvEntry ?? process.argv[1],
+        moduleUrl: params.importerUrl,
+        devSourceRoot: params.devSourceRoot,
+        pluginSdkResolution: params.pluginSdkResolution,
+      });
+  const { getAliasMap } = aliases;
+  const { sharedCacheScopeKey, cacheScopeKey } = params;
+  const transformOpenClawDependencies = params.transformOpenClawDependencies ?? tryNative;
+  const getCacheKey = () => {
+    if (sharedCacheScopeKey !== undefined) {
+      return `${loaderFilename}::${sharedCacheScopeKey}`;
+    }
+    const contentKey = aliasMap
+      ? aliases.cacheKey
+      : `implicit\0${tryNative ? "native" : "transform"}\0${aliases.cacheKey}`;
+    const cacheKey = `${contentKey}\0transform-openclaw=${transformOpenClawDependencies ? "1" : "0"}`;
+    return `${loaderFilename}::${cacheScopeKey ? `${cacheScopeKey}::${cacheKey}` : cacheKey}`;
+  };
+  // Cache the owner above native attempts: a successful fallback must retain its
+  // exports even when Jiti does not populate Node's require cache.
+  const cacheKey = getCacheKey();
+  const cached = params.cache.get(cacheKey);
   if (cached) {
     return cached;
   }
-  // Exact-key hits already own the native aliases installed with their loader;
-  // reinstallation would rescan the host package on every cached request.
   installOpenClawInternalCorePackageNativeResolver({ moduleUrl: params.importerUrl });
-  const loader = createPluginModuleLoader({
-    loaderFilename: cacheEntry.loaderFilename,
-    aliasMap: cacheEntry.aliasMap,
-    tryNative: cacheEntry.tryNative,
-    transformOpenClawDependencies: cacheEntry.transformOpenClawDependencies,
-    ...(params.createLoader ? { createLoader: params.createLoader } : {}),
+  const getLoadWithSourceTransform = createLazySourceTransformLoader({
+    loaderFilename,
+    getAliasMap,
+    transformOpenClawDependencies,
+    createLoader: params.createLoader,
   });
-  params.cache.set(cacheEntry.scopedCacheKey, loader);
+  const loader = createPluginModuleLoader({
+    aliasMap: aliasMap ?? aliases.resolveAlias,
+    tryNative,
+    getLoadWithSourceTransform,
+  });
+  params.cache.set(cacheKey, loader);
   return loader;
 }
 

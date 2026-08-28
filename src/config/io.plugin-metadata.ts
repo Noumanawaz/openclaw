@@ -1,12 +1,46 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { listAgentWorkspaceDirs } from "../agents/workspace-dirs.js";
 import type { PluginManifestRegistry } from "../plugins/manifest-registry.js";
 import {
+  rebasePluginMetadataSnapshotManifestRegistry,
   resolvePluginMetadataSnapshot,
   type PluginMetadataSnapshot,
 } from "../plugins/plugin-metadata-snapshot.js";
 import type { PluginMetadataSnapshotPluginIdScope } from "../plugins/plugin-metadata-snapshot.types.js";
 import { normalizePluginPolicyId } from "../plugins/plugin-policy-id.js";
+import { resolveGlobalSingleton } from "../shared/global-singleton.js";
 import type { OpenClawConfig } from "./types.openclaw.js";
+
+/** The aggregate validates every workspace; only the original snapshots describe execution scopes. */
+export type ConfigPluginMetadata = PluginManifestRegistry & {
+  workspaceSnapshots: readonly PluginMetadataSnapshot[];
+};
+
+const configMetadataResolver = resolveGlobalSingleton(
+  Symbol.for("openclaw.configPluginMetadataResolver"),
+  () => new AsyncLocalStorage<typeof resolvePluginMetadataSnapshot>(),
+);
+
+/** Config reads may borrow an invocation's resolver, never its validation result. */
+export function withConfigPluginMetadataResolver<T>(
+  resolver: typeof resolvePluginMetadataSnapshot,
+  read: () => T,
+): T {
+  return configMetadataResolver.run(resolver, read);
+}
+
+/** Preserve the public read/write aggregate contract; this is not an executable workspace graph. */
+export function projectConfigPluginMetadataForReadWrite(
+  metadata: ConfigPluginMetadata | undefined,
+): PluginMetadataSnapshot | undefined {
+  const first = metadata?.workspaceSnapshots[0];
+  return first && metadata
+    ? rebasePluginMetadataSnapshotManifestRegistry(first, {
+        plugins: metadata.plugins,
+        diagnostics: metadata.diagnostics,
+      })
+    : undefined;
+}
 
 function mergeRegistries(registries: readonly PluginManifestRegistry[]): PluginManifestRegistry {
   const grouped = new Map<
@@ -46,17 +80,17 @@ type ResolveConfigWidePluginMetadataParams = {
   allowCurrent?: boolean;
   pluginIds?: readonly string[];
   pluginIdScope?: PluginMetadataSnapshotPluginIdScope;
-  onSnapshotResolved?: (snapshot: PluginMetadataSnapshot) => void;
 };
 
 export function resolveConfigWidePluginManifestRegistry(
   params: ResolveConfigWidePluginMetadataParams,
-): PluginManifestRegistry {
+): ConfigPluginMetadata {
   const env = params.env ?? process.env;
   const dirs = listAgentWorkspaceDirs(params.config, env);
   const workspaceDirs: Array<string | undefined> = dirs.length ? dirs : [undefined];
-  const resolveSnapshot = (workspaceDir: string | undefined) =>
-    resolvePluginMetadataSnapshot({
+  const resolveSnapshot = configMetadataResolver.getStore() ?? resolvePluginMetadataSnapshot;
+  const workspaceSnapshots = workspaceDirs.map((workspaceDir) =>
+    resolveSnapshot({
       config: params.config,
       ...(workspaceDir ? { workspaceDir } : {}),
       ...(params.stateDir ? { stateDir: params.stateDir } : {}),
@@ -65,10 +99,10 @@ export function resolveConfigWidePluginManifestRegistry(
       allowWorkspaceScopedCurrent: true,
       ...(params.pluginIds !== undefined ? { pluginIds: params.pluginIds } : {}),
       ...(params.pluginIdScope ? { pluginIdScope: params.pluginIdScope } : {}),
-    });
-  const firstSnapshot = resolveSnapshot(workspaceDirs[0]);
-  const snapshots = [firstSnapshot, ...workspaceDirs.slice(1).map(resolveSnapshot)];
-  const manifestRegistry = mergeRegistries(snapshots.map((snapshot) => snapshot.manifestRegistry));
-  params.onSnapshotResolved?.(firstSnapshot);
-  return manifestRegistry;
+    }),
+  );
+  return {
+    ...mergeRegistries(workspaceSnapshots.map((snapshot) => snapshot.manifestRegistry)),
+    workspaceSnapshots,
+  };
 }

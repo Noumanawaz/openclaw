@@ -136,6 +136,28 @@ channel bootstrap helpers should be recomputed from the current
 registry/root. Short-lived maps are fine inside one call to dedupe work or
 guard reentry; they must not become process metadata caches.
 
+CLI startup owns one invocation session before its first best-effort config
+read, including reads requested by diagnostics. Config validation retains the
+aggregate registry and the original workspace snapshots separately. The aggregate
+can validate every configured workspace; executable CLI registration uses only
+the selected owner's workspace, or shared roots when an explicit roster has no
+owner. Machine-output detection, both command-ownership checks, and registration
+reuse the prepared source inventory. Registration still rereads and validates
+config under the command's startup policy, and provider defaults request extra
+metadata only when a direct public artifact cannot answer the request.
+
+Config, effective environment, retained agent ownership, workspace, install roots,
+state scope, and loader inputs determine reuse. Explicit metadata invalidation
+fences pending preparation and captured registrars. Startup ownership closes before
+Commander executes actions; later lazy registration and completion operations own
+fresh preparation. Invocation metadata is never published as a Gateway snapshot.
+
+Trusted plugins can open their scoped state stores during executable registration
+without materializing the broad plugin runtime. A later non-state capability
+materializes that runtime once and retains the same base state object and open
+handles. Metadata-only and setup runtimes still deny state access. Reading entries
+from a missing state store remains read-only and does not create a database.
+
 For plugin loading, the persistent cache layer is runtime loading. It may reuse
 loader state when code or installed artifacts are actually loaded, such as:
 

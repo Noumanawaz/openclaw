@@ -147,8 +147,10 @@ describe("getCachedPluginModuleLoader", () => {
     const first = getCachedPluginModuleLoader(params);
     const second = getCachedPluginModuleLoader(params);
 
-    expect(second).toBe(first);
+    expect(cache.size).toBe(1);
+    expect(createJiti).not.toHaveBeenCalled();
     first("/repo/extensions/demo/index.ts");
+    second("/repo/extensions/demo/index.ts");
     expect(createJiti).toHaveBeenCalledTimes(1);
     expect(cache.size).toBe(1);
   });
@@ -169,6 +171,7 @@ describe("getCachedPluginModuleLoader", () => {
       importerUrl: "file:///repo/src/plugins/loader.ts",
       loaderFilename: "/repo/extensions/demo/index.ts",
       tryNative: false,
+      aliasMap: {},
     } as const;
 
     const first = getCachedPluginModuleLoader(params);
@@ -204,12 +207,13 @@ describe("getCachedPluginModuleLoader", () => {
       importerUrl: "file:///repo/src/plugins/loader.ts",
       loaderFilename: "/repo/extensions/demo-a/index.ts",
     });
+    first("/repo/extensions/demo-a/index.ts");
     getCachedPluginModuleLoader({
       cache,
       modulePath: "/repo/extensions/demo-b/index.ts",
       importerUrl: "file:///repo/src/plugins/loader.ts",
       loaderFilename: "/repo/extensions/demo-b/index.ts",
-    });
+    })("/repo/extensions/demo-b/index.ts");
     const reloadedFirst = getCachedPluginModuleLoader({
       cache,
       modulePath: "/repo/extensions/demo-a/index.ts",
@@ -220,7 +224,8 @@ describe("getCachedPluginModuleLoader", () => {
     expect(cache.size).toBe(1);
     expect(reloadedFirst).not.toBe(first);
     reloadedFirst("/repo/extensions/demo-a/index.ts");
-    expect(createJiti).toHaveBeenCalledOnce();
+    expect(createJiti).toHaveBeenCalledTimes(3);
+    expect(cache.size).toBe(1);
   });
 
   it("keeps loader caches scoped by loader filename and dist preference", async () => {
@@ -317,39 +322,42 @@ describe("getCachedPluginModuleLoader", () => {
     expect(cache.size).toBe(2);
   });
 
-  it("lets callers explicitly share loaders behind an unsafe shared cache scope key", async () => {
-    const { createJiti, getCachedPluginModuleLoader } =
-      await loadCachedPluginModuleLoader("shared-cache-scope-key");
+  it.each(["bundled:native", ""])(
+    "lets callers explicitly share loaders behind scope %j",
+    async (sharedCacheScopeKey) => {
+      const { createJiti, getCachedPluginModuleLoader } =
+        await loadCachedPluginModuleLoader("shared-cache-scope-key");
 
-    const cache = new Map();
-    const first = getCachedPluginModuleLoader({
-      cache,
-      modulePath: "/repo/dist/extensions/demo-a/api.js",
-      importerUrl: "file:///repo/src/plugins/public-surface-loader.ts",
-      loaderFilename: "file:///repo/src/plugins/public-surface-loader.ts",
-      aliasMap: {
-        demo: "/repo/demo-a.js",
-      },
-      tryNative: true,
-      sharedCacheScopeKey: "bundled:native",
-    });
-    const second = getCachedPluginModuleLoader({
-      cache,
-      modulePath: "/repo/dist/extensions/demo-b/api.js",
-      importerUrl: "file:///repo/src/plugins/public-surface-loader.ts",
-      loaderFilename: "file:///repo/src/plugins/public-surface-loader.ts",
-      aliasMap: {
-        demo: "/repo/demo-b.js",
-      },
-      tryNative: true,
-      sharedCacheScopeKey: "bundled:native",
-    });
+      const cache = new Map();
+      const first = getCachedPluginModuleLoader({
+        cache,
+        modulePath: "/repo/dist/extensions/demo-a/api.js",
+        importerUrl: "file:///repo/src/plugins/public-surface-loader.ts",
+        loaderFilename: "file:///repo/src/plugins/public-surface-loader.ts",
+        aliasMap: {
+          demo: "/repo/demo-a.js",
+        },
+        tryNative: true,
+        sharedCacheScopeKey,
+      });
+      const second = getCachedPluginModuleLoader({
+        cache,
+        modulePath: "/repo/dist/extensions/demo-b/api.js",
+        importerUrl: "file:///repo/src/plugins/public-surface-loader.ts",
+        loaderFilename: "file:///repo/src/plugins/public-surface-loader.ts",
+        aliasMap: {
+          demo: "/repo/demo-b.js",
+        },
+        tryNative: true,
+        sharedCacheScopeKey,
+      });
 
-    expect(second).toBe(first);
-    second("/repo/dist/extensions/demo-b/api.js");
-    expect(createJiti).toHaveBeenCalledTimes(1);
-    expect(cache.size).toBe(1);
-  });
+      expect(second).toBe(first);
+      second("/repo/dist/extensions/demo-b/api.js");
+      expect(createJiti).toHaveBeenCalledTimes(1);
+      expect(cache.size).toBe(1);
+    },
+  );
 
   it("reuses pre-normalized alias options across module-scoped loader filenames", async () => {
     const { createJiti, getCachedPluginModuleLoader } =
@@ -589,7 +597,7 @@ describe("getCachedPluginModuleLoader", () => {
     }
   });
 
-  it("does not source-transform fallback after native loading reaches a missing dependency", async () => {
+  it("propagates a native-require helper throw without invoking source transformation", async () => {
     const fromSourceTransformer = vi.fn();
     const createJiti = vi.fn(() => fromSourceTransformer);
     vi.doMock("jiti", () => ({ createJiti }));

@@ -1,8 +1,35 @@
 // Channel id tests cover identifier normalization and validation helpers.
-import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
+import { withEnv } from "../test-utils/env.js";
 import { findChatChannelLabel, normalizeChatChannelId } from "./ids.js";
 
+const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+afterEach(clearPluginMetadataLifecycleCaches);
+
 describe("channel ids", () => {
+  it("replaces runtime channel aliases at the metadata lifecycle boundary", () => {
+    const root = tempDirs.make("openclaw-channel-ids-");
+    const pluginDir = path.join(root, "fixture");
+    fs.mkdirSync(pluginDir);
+    withEnv(
+      { OPENCLAW_BUNDLED_PLUGINS_DIR: root, OPENCLAW_DISABLE_BUNDLED_PLUGINS: undefined },
+      () => {
+        for (const id of ["first-fixture-chat", "second-fixture-chat"]) {
+          fs.writeFileSync(
+            path.join(pluginDir, "package.json"),
+            JSON.stringify({ openclaw: { channel: { id, aliases: ["fixture-alias"] } } }),
+          );
+          clearPluginMetadataLifecycleCaches();
+          expect(normalizeChatChannelId("fixture-alias")).toBe(id);
+        }
+        expect(normalizeChatChannelId("first-fixture-chat")).toBeNull();
+      },
+    );
+  });
   it("normalizes built-in aliases + trims whitespace", () => {
     expect(normalizeChatChannelId(" imsg ")).toBe("imessage");
     expect(normalizeChatChannelId("gchat")).toBe("googlechat");

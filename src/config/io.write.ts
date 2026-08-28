@@ -127,7 +127,7 @@ export async function writeConfigFileFromContext(
   const snapshotRead = options.baseSnapshot
     ? {
         snapshot: options.baseSnapshot,
-        pluginMetadataSnapshot: options.basePluginMetadataSnapshot,
+        pluginMetadata: options.basePluginMetadataSnapshot?.manifestRegistry,
       }
     : await readSnapshot();
   const snapshot = snapshotRead.snapshot;
@@ -209,7 +209,7 @@ export async function writeConfigFileFromContext(
         nextConfig,
         ownerAgentId,
         deps.env,
-        snapshotRead.pluginMetadataSnapshot?.manifestRegistry.plugins,
+        snapshotRead.pluginMetadata?.plugins,
         { materializeSessionStore: sameFixedSessionStore, materializeWorkspace: true },
       )
     : { config: nextConfig, insertedPaths: [] as string[][] };

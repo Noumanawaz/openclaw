@@ -22,5 +22,12 @@
     "../../src/hooks/**/*.test.tsx",
     "../../src/daemon/**/*.test.ts",
     "../../src/daemon/**/*.test.tsx"
+  ],
+  "exclude": [
+    "../../node_modules",
+    "../../dist",
+    "../../**/dist/**",
+    "../../src/plugins/cli*.test.ts",
+    "../../src/plugins/cli*.test.tsx"
   ]
 }

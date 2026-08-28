@@ -5,6 +5,7 @@
  */
 import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/string-coerce";
 import { GENERATED_BUNDLED_CHANNEL_CONFIG_METADATA } from "../config/bundled-channel-config-metadata.generated.js";
+import { registerPluginMetadataProcessMemoLifecycleClear } from "../plugins/plugin-metadata-lifecycle.js";
 import { listBundledChannelCatalogEntries } from "./bundled-channel-catalog-read.js";
 
 /**
@@ -36,6 +37,9 @@ function listBundledChatChannelEntries(): BundledChatChannelEntry[] {
 const BUNDLED_CHAT_CHANNEL_ENTRIES = Object.freeze(listBundledChatChannelEntries());
 const CHAT_CHANNEL_ID_SET = new Set(BUNDLED_CHAT_CHANNEL_ENTRIES.map((entry) => entry.id));
 let runtimeBundledChatChannelEntries: BundledChatChannelEntry[] | null = null;
+registerPluginMetadataProcessMemoLifecycleClear(() => {
+  runtimeBundledChatChannelEntries = null;
+});
 
 /**
  * Stable built-in channel order derived from generated bundled channel metadata.

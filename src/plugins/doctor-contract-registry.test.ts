@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { withMockedPlatform } from "../test-utils/vitest-spies.js";
 import { resolvePluginDoctorContractArtifactPath } from "./doctor-contract-artifact.js";
+import type { PluginManifestRegistry } from "./manifest-registry.js";
 import { cleanupTrackedTempDirs, makeTrackedTempDir } from "./test-helpers/fs-fixtures.js";
 import {
   getRegistryJitiMocks,
@@ -556,26 +557,36 @@ describe("doctor-contract-registry module loader", () => {
     expect(mocks.loadPluginManifestRegistry).toHaveBeenCalledTimes(2);
   });
 
-  it.each([
-    { name: "full scan", touchedPaths: undefined, configRepair: true, expected: true },
-    { name: "parent edit", touchedPaths: [["legacyRoots"]], configRepair: true, expected: true },
-    {
-      name: "dotted owner edit",
-      touchedPaths: [["legacyRoots", "store.with.dots", "root"]],
-      configRepair: true,
-      expected: true,
-    },
-    {
-      name: "unrelated edit",
-      touchedPaths: [["gateway", "port"]],
-      configRepair: true,
-      expected: false,
-    },
-    { name: "empty edit", touchedPaths: [], configRepair: true, expected: false },
-    { name: "undeclared repair", touchedPaths: undefined, configRepair: false, expected: false },
-  ])(
-    "discovers declared config migration sources without plugin entries: $name",
-    async ({ touchedPaths, configRepair, expected }) => {
+  it.each(
+    [
+      { name: "full scan", touchedPaths: undefined, configRepair: true, expected: true },
+      { name: "parent edit", touchedPaths: [["legacyRoots"]], configRepair: true, expected: true },
+      {
+        name: "dotted owner edit",
+        touchedPaths: [["legacyRoots", "store.with.dots", "root"]],
+        configRepair: true,
+        expected: true,
+      },
+      {
+        name: "unrelated edit",
+        touchedPaths: [["gateway", "port"]],
+        configRepair: true,
+        expected: false,
+      },
+      { name: "empty edit", touchedPaths: [], configRepair: true, expected: false },
+      { name: "undeclared repair", touchedPaths: undefined, configRepair: false, expected: false },
+    ].flatMap(({ name, touchedPaths, configRepair, expected }) =>
+      ["discovered", "supplied", "empty"].map((metadata) => ({
+        name,
+        touchedPaths,
+        configRepair,
+        expected,
+        metadata,
+      })),
+    ),
+  )(
+    "discovers declared config migration sources without plugin entries: $name, $metadata metadata",
+    async ({ touchedPaths, configRepair, expected, metadata }) => {
       const pluginRoot = makeTempDir();
       fs.writeFileSync(path.join(pluginRoot, "doctor-contract-api.ts"), "export {};\n", "utf-8");
       const rule = {
@@ -586,26 +597,46 @@ describe("doctor-contract-registry module loader", () => {
         legacyConfigRules: [rule],
         resolveSessionStoreAgentIds: () => ["unexpected-owner"],
       }));
-      mocks.loadPluginManifestRegistry.mockReturnValue({
+      const registry: PluginManifestRegistry = {
         plugins: [
           {
             id: "root-owner",
             rootDir: pluginRoot,
             channels: [],
             providers: [],
+            cliBackends: [],
+            skills: [],
+            hooks: [],
+            origin: "bundled",
+            source: path.join(pluginRoot, "index.js"),
+            manifestPath: path.join(pluginRoot, "openclaw.plugin.json"),
             doctorContract: { configRepair, resolveSessionStoreAgentIds: true },
             configContracts: { compatibilityMigrationPaths: ["legacyRoots.*.root"] },
           },
         ],
         diagnostics: [],
-      });
+      };
+      const manifestRegistry =
+        metadata === "discovered" ? undefined : metadata === "empty" ? { plugins: [] } : registry;
+      mocks.loadPluginManifestRegistry.mockReturnValue(
+        metadata === "supplied" ? { plugins: [], diagnostics: [] } : registry,
+      );
       const raw = { legacyRoots: { "store.with.dots": { root: "/legacy/documents" } } };
       const { findDoctorLegacyConfigIssues } =
         await import("../commands/doctor/shared/legacy-config-issues.js");
-      expect(findDoctorLegacyConfigIssues(raw, raw, touchedPaths)).toEqual(
-        expected ? [{ path: rule.path.join("."), message: rule.message }] : [],
+      const expectsIssue = expected && metadata !== "empty";
+      expect(findDoctorLegacyConfigIssues(raw, raw, touchedPaths, manifestRegistry)).toEqual(
+        expectsIssue ? [{ path: rule.path.join("."), message: rule.message }] : [],
       );
-      expect(mocks.createJiti).toHaveBeenCalledTimes(expected ? 1 : 0);
+      expect(mocks.createJiti).toHaveBeenCalledTimes(expectsIssue ? 1 : 0);
+      if (manifestRegistry) {
+        expect(mocks.loadPluginManifestRegistry).not.toHaveBeenCalled();
+      } else {
+        expect(mocks.loadPluginManifestRegistry).toHaveBeenCalledWith({
+          config: raw,
+          includeDisabled: true,
+        });
+      }
       // Config migration declarations must not select new session-store owners.
       const pluginIds = collectRelevantDoctorPluginIds(raw);
       expect(pluginIds).toEqual([]);

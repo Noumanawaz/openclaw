@@ -12,9 +12,10 @@ import {
 import { installOpenClawPluginSdkNativeResolver } from "./plugin-sdk-native-resolver.js";
 import type { PluginRegistry } from "./registry-types.js";
 import { withPluginRegistrationContext } from "./runtime.js";
+import type { createPluginRuntime } from "./runtime/index.js";
+import { createRuntimeState } from "./runtime/runtime-state.js";
 import type { CreatePluginRuntimeOptions, PluginRuntime } from "./runtime/types.js";
 import {
-  buildPluginLoaderAliasMap,
   type PluginRuntimeModuleResolution,
   type PluginSdkResolutionPreference,
   resolvePluginRuntimeModulePathWithDiagnostics,
@@ -117,20 +118,12 @@ export function createPluginModuleLoader(options: {
         pluginSdkResolution: options.pluginSdkResolution,
       });
     }
-    const aliasMap = buildPluginLoaderAliasMap(
-      modulePath,
-      process.argv[1],
-      import.meta.url,
-      options.pluginSdkResolution,
-      options.devSourceRoot,
-    );
     return getCachedPluginModuleLoader({
       cache: moduleLoaders,
       modulePath,
       importerUrl: import.meta.url,
       loaderFilename: options.loaderFilename ?? modulePath,
       devSourceRoot: options.devSourceRoot,
-      aliasMap,
       pluginSdkResolution: options.pluginSdkResolution,
       ...(options.tryNative !== undefined ? { tryNative: options.tryNative } : {}),
     });
@@ -164,11 +157,8 @@ export function createLazyPluginRuntime(params: {
 }): PluginRuntime {
   // Avoid loading every channel/runtime dependency tree until a plugin actually
   // reaches a runtime API surface.
-  let createPluginRuntimeFactory: ((options?: CreatePluginRuntimeOptions) => PluginRuntime) | null =
-    null;
-  const resolveCreatePluginRuntime = (): ((
-    options?: CreatePluginRuntimeOptions,
-  ) => PluginRuntime) => {
+  let createPluginRuntimeFactory: typeof createPluginRuntime | null = null;
+  const resolveCreatePluginRuntime = (): typeof createPluginRuntime => {
     if (createPluginRuntimeFactory) {
       return createPluginRuntimeFactory;
     }
@@ -190,7 +180,7 @@ export function createLazyPluginRuntime(params: {
       "runtime-module",
       () =>
         params.loadPluginModule(resolvedPath) as {
-          createPluginRuntime?: (options?: CreatePluginRuntimeOptions) => PluginRuntime;
+          createPluginRuntime?: typeof createPluginRuntime;
         },
     );
     if (typeof runtimeModule.createPluginRuntime !== "function") {
@@ -201,10 +191,15 @@ export function createLazyPluginRuntime(params: {
   };
 
   let resolvedRuntime: PluginRuntime | null = null;
+  // Registration can open state without importing unrelated runtimes. Full materialization
+  // adopts this same object; later property mutations belong to the materialized runtime.
+  const state = createRuntimeState();
   const resolveRuntime = (): PluginRuntime => {
-    resolvedRuntime ??= resolveCreatePluginRuntime()(params.runtimeOptions);
+    resolvedRuntime ??= resolveCreatePluginRuntime()(params.runtimeOptions, state);
     return resolvedRuntime;
   };
+  const getRuntimeProperty = (prop: PropertyKey, ...receiver: [] | [unknown]) =>
+    prop === "state" && !resolvedRuntime ? state : Reflect.get(resolveRuntime(), prop, ...receiver);
   const lazyRuntimeReflectionKeySet = new Set<PropertyKey>(LAZY_RUNTIME_REFLECTION_KEYS);
   const resolveLazyRuntimeDescriptor = (prop: PropertyKey): PropertyDescriptor | undefined => {
     if (!lazyRuntimeReflectionKeySet.has(prop)) {
@@ -214,7 +209,7 @@ export function createLazyPluginRuntime(params: {
       configurable: true,
       enumerable: true,
       get() {
-        return Reflect.get(resolveRuntime() as object, prop);
+        return getRuntimeProperty(prop);
       },
       set(value: unknown) {
         Reflect.set(resolveRuntime() as object, prop, value);
@@ -231,7 +226,7 @@ export function createLazyPluginRuntime(params: {
           return value;
         }
       }
-      return Reflect.get(resolveRuntime(), prop, receiver);
+      return getRuntimeProperty(prop, receiver);
     },
     set(_target, prop, value, receiver) {
       return Reflect.set(resolveRuntime(), prop, value, receiver);

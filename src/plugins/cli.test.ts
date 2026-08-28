@@ -2,6 +2,7 @@
 import { Command } from "commander";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
+import { createPluginMetadataSnapshot } from "../config/plugin-auto-enable.test-helpers.js";
 
 const mocks = vi.hoisted(() => ({
   memoryRegister: vi.fn(),
@@ -34,11 +35,8 @@ vi.mock("../config/plugin-auto-enable.js", () => ({
   applyPluginAutoEnable: (...args: unknown[]) => mocks.applyPluginAutoEnable(...args),
 }));
 
-vi.mock("../config/io.plugin-metadata.js", () => ({
-  resolveConfigWidePluginManifestRegistry: () => ({ plugins: [], diagnostics: [] }),
-}));
-
-vi.mock("./plugin-metadata-snapshot.js", () => ({
+vi.mock("./plugin-metadata-snapshot.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./plugin-metadata-snapshot.js")>()),
   isPluginMetadataSnapshotCompatible: () => true,
   rebasePluginMetadataSnapshotManifestRegistry: <T>(snapshot: T) => snapshot,
   resolvePluginMetadataSnapshot: (...args: unknown[]) =>
@@ -49,7 +47,9 @@ vi.mock("../config/config.js", () => ({
   getRuntimeConfig: (...args: unknown[]) => mocks.loadConfig(...args),
   getRuntimeConfigSnapshot: (...args: unknown[]) => mocks.getRuntimeConfigSnapshot(...args),
   loadConfig: (...args: unknown[]) => mocks.loadConfig(...args),
-  readConfigFileSnapshot: (...args: unknown[]) => mocks.readConfigFileSnapshot(...args),
+  readConfigFileSnapshotWithPluginMetadata: async (...args: unknown[]) => ({
+    snapshot: await mocks.readConfigFileSnapshot(...args),
+  }),
 }));
 
 let getPluginCliCommandDescriptors: typeof import("./cli.js").getPluginCliCommandDescriptors;
@@ -222,7 +222,13 @@ describe("registerPluginCliCommands", () => {
     mocks.resolveManifestActivationPluginIds.mockReturnValue([]);
     mocks.applyPluginAutoEnable.mockReset();
     mocks.resolvePluginMetadataSnapshot.mockReset();
-    mocks.resolvePluginMetadataSnapshot.mockReturnValue(undefined);
+    mocks.resolvePluginMetadataSnapshot.mockImplementation(({ config, workspaceDir }) =>
+      createPluginMetadataSnapshot({
+        config,
+        workspaceDir,
+        manifestRegistry: { plugins: [], diagnostics: [] },
+      }),
+    );
     mocks.applyPluginAutoEnable.mockImplementation(({ config }) => ({
       config,
       changes: [],
@@ -260,13 +266,15 @@ describe("registerPluginCliCommands", () => {
     expect(mocks.otherRegister).toHaveBeenCalledTimes(1);
   });
 
-  it("forwards an explicit env to plugin loading", async () => {
+  it("snapshots explicit env values for plugin loading", async () => {
     const env = { OPENCLAW_HOME: "/srv/openclaw-home" } as NodeJS.ProcessEnv;
 
     await registerPluginCliCommands(createProgram(), {} as OpenClawConfig, env);
 
     const loadOptions = getMockCallObject(mocks.loadOpenClawPlugins);
-    expect(loadOptions.env).toBe(env);
+    expect(loadOptions.env).toEqual(env);
+    env.OPENCLAW_HOME = "/srv/changed-home";
+    expect(loadOptions.env).toEqual({ OPENCLAW_HOME: "/srv/openclaw-home" });
   });
 
   it("injects gateway-backed node runtime into plugin CLI commands", async () => {
@@ -279,13 +287,14 @@ describe("registerPluginCliCommands", () => {
     expect(typeof loadOptions.runtimeOptions?.nodes?.invoke).toBe("function");
   });
 
-  it("reuses loaded plugin CLI entries on repeat calls for the same program", async () => {
+  it("prepares each independent registration without duplicating commands on the same program", async () => {
     const program = createProgram();
 
     await registerPluginCliCommands(program, {} as OpenClawConfig);
     await registerPluginCliCommands(program, {} as OpenClawConfig);
 
-    expect(mocks.loadOpenClawPlugins).toHaveBeenCalledTimes(1);
+    expect(mocks.loadOpenClawPlugins).toHaveBeenCalledTimes(2);
+    expect(mocks.memoryRegister).toHaveBeenCalledTimes(1);
   });
 
   it("reloads plugin CLI entries when the requested primary command changes", async () => {
@@ -683,7 +692,10 @@ describe("registerPluginCliCommands", () => {
     await expect(
       loadValidatedConfigForPluginRegistration({ skipPluginValidation: true }),
     ).resolves.toBe(snapshotConfig);
-    expect(mocks.readConfigFileSnapshot).toHaveBeenCalledWith({ skipPluginValidation: true });
+    expect(mocks.readConfigFileSnapshot).toHaveBeenCalledWith({
+      skipPluginValidation: true,
+      allowCurrentPluginMetadata: false,
+    });
   });
 
   it("preserves an already-active runtime config snapshot", async () => {

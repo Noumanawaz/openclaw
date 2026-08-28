@@ -13,9 +13,14 @@ import {
   type ProviderPolicySurface,
 } from "./provider-policy-surface.js";
 
+type ProviderPolicyMetadata = {
+  manifestRegistry?: Pick<PluginManifestRegistry, "plugins">;
+  loadManifestRegistry?: () => Pick<PluginManifestRegistry, "plugins"> | undefined;
+};
+
 function resolveBundledProviderPolicyPlugin(
   providerId: string,
-  options: { manifestRegistry?: Pick<PluginManifestRegistry, "plugins"> } = {},
+  options: ProviderPolicyMetadata = {},
 ): PluginManifestRegistry["plugins"][number] | null {
   const normalizedProviderId = normalizeProviderId(providerId);
   if (!normalizedProviderId) {
@@ -26,7 +31,10 @@ function resolveBundledProviderPolicyPlugin(
     return null;
   }
 
-  const registry = options.manifestRegistry ?? loadPluginManifestRegistryCore();
+  const registry =
+    options.manifestRegistry ??
+    options.loadManifestRegistry?.() ??
+    loadPluginManifestRegistryCore();
   for (const plugin of registry.plugins.toSorted((left, right) =>
     left.id.localeCompare(right.id),
   )) {
@@ -38,7 +46,13 @@ function resolveBundledProviderPolicyPlugin(
     }
   }
 
-  return null;
+  // Validation can intentionally supply an empty scope. Provider defaults own any
+  // additional demand, while callers without a lazy owner keep that scope exact.
+  return options.manifestRegistry && options.loadManifestRegistry
+    ? resolveBundledProviderPolicyPlugin(providerId, {
+        manifestRegistry: options.loadManifestRegistry(),
+      })
+    : null;
 }
 
 function pluginOwnsProviderPolicyRef(
@@ -68,7 +82,7 @@ function pluginOwnsProviderPolicyRef(
 /** Resolves provider policy hooks for a bundled provider or its owning plugin. */
 export function resolveBundledProviderPolicySurface(
   providerId: string,
-  options: { manifestRegistry?: Pick<PluginManifestRegistry, "plugins"> } = {},
+  options: ProviderPolicyMetadata = {},
 ): BundledProviderPolicySurface | null {
   const normalizedProviderId = normalizeProviderId(providerId);
   if (!normalizedProviderId) {

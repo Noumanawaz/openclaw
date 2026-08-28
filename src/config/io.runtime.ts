@@ -127,10 +127,12 @@ export async function readBestEffortConfig(options?: {
 }
 
 export async function readBestEffortConfigSnapshot(options?: {
+  isolateEnv?: boolean;
   observe?: boolean;
   skipPluginValidation?: boolean;
 }): Promise<BestEffortConfigSnapshot> {
   return await createConfigIO({
+    ...(options?.isolateEnv ? { env: cloneEnvWithPlatformSemantics(process.env) } : {}),
     ...(options?.observe === false ? { observe: false } : {}),
     ...(options?.skipPluginValidation ? { pluginValidation: "skip" } : {}),
   }).readBestEffortConfigSnapshot();

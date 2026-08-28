@@ -19,15 +19,16 @@ import { withExistingOpenClawStateDatabaseReadOnly } from "../state/openclaw-sta
 import { runOpenClawStateWriteTransaction } from "../state/openclaw-state-db.js";
 import { safeParseWithSchema } from "../utils/zod-parse.js";
 import { resolveCompatibilityHostVersion } from "../version.js";
-import { normalizePluginsConfig, resolveEffectiveEnableState } from "./config-state.js";
-import { isPluginEnabledByDefaultForPlatform } from "./default-enablement.js";
 import { hashStableJson } from "./installed-plugin-index-hash.js";
 import {
   isInstalledPluginIndexInstallOwnerAmbiguous,
   recordInstalledPluginIndexInstallOwner,
   resolveInstalledPluginIndexInstallOwner,
 } from "./installed-plugin-index-install-owner.js";
-import { resolveCompatRegistryVersion } from "./installed-plugin-index-policy.js";
+import {
+  applyInstalledPluginIndexPolicy,
+  resolveCompatRegistryVersion,
+} from "./installed-plugin-index-policy.js";
 import { clearLoadInstalledPluginIndexInstallRecordsCache } from "./installed-plugin-index-record-cache.js";
 import {
   resolveInstalledPluginIndexStateDatabaseOptions,
@@ -41,7 +42,6 @@ import {
   INSTALLED_PLUGIN_INDEX_WARNING,
   INSTALLED_PLUGIN_INDEX_VERSION,
   INSTALLED_PLUGIN_INDEX_MIGRATION_VERSION,
-  resolveInstalledPluginIndexPolicyHash,
   refreshInstalledPluginIndex,
   type InstalledPluginIndex,
   type RefreshInstalledPluginIndexParams,
@@ -506,22 +506,10 @@ function refreshPersistedPolicyState(
   persisted: InstalledPluginIndex,
   params: RefreshInstalledPluginIndexParams,
 ): InstalledPluginIndex {
-  const normalizedConfig = normalizePluginsConfig(params.config?.plugins);
   return {
-    ...persisted,
-    policyHash: resolveInstalledPluginIndexPolicyHash(params.config),
+    ...applyInstalledPluginIndexPolicy(persisted, params.config),
     generatedAtMs: (params.now?.() ?? new Date()).getTime(),
     refreshReason: params.reason,
-    plugins: persisted.plugins.map((plugin) => ({
-      ...plugin,
-      enabled: resolveEffectiveEnableState({
-        id: plugin.pluginId,
-        origin: plugin.origin,
-        config: normalizedConfig,
-        rootConfig: params.config,
-        enabledByDefault: isPluginEnabledByDefaultForPlatform(plugin),
-      }).enabled,
-    })),
   };
 }
 

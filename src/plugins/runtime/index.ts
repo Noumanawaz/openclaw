@@ -1,7 +1,6 @@
 import { resolveSandboxWorkspaceAuthority } from "../../agents/sandbox/workspace-authority.js";
 // Plugin runtime entrypoint assembles runtime helpers available to activated plugins.
 import { getRuntimeConfig } from "../../config/config.js";
-import { resolveStateDir } from "../../config/paths.js";
 import {
   generateImage as generateRuntimeImage,
   listRuntimeImageGenerationProviders,
@@ -30,6 +29,7 @@ import { createRuntimeConfig } from "./runtime-config.js";
 import { createRuntimeEvents } from "./runtime-events.js";
 import { createRuntimeLogging } from "./runtime-logging.js";
 import { createRuntimeMedia } from "./runtime-media.js";
+import { createRuntimeState } from "./runtime-state.js";
 import { createRuntimeSystem } from "./runtime-system.js";
 import { createRuntimeTaskFlow } from "./runtime-taskflow.js";
 import { createRuntimeTasks } from "./runtime-tasks.js";
@@ -256,7 +256,10 @@ function createRuntimeSandbox(agent: PluginRuntime["agent"]): PluginRuntime["san
 }
 
 // Loaded by path from the plugin loader, so static export analysis cannot see this contract.
-export function createPluginRuntime(_options: CreatePluginRuntimeOptions = {}): PluginRuntime {
+export function createPluginRuntime(
+  _options: CreatePluginRuntimeOptions = {},
+  state: PluginRuntime["state"] = createRuntimeState(),
+): PluginRuntime {
   const mediaUnderstanding = createRuntimeMediaUnderstandingFacade();
   const taskFlow = createRuntimeTaskFlow();
   const tasks = createRuntimeTasks({
@@ -292,28 +295,7 @@ export function createPluginRuntime(_options: CreatePluginRuntimeOptions = {}): 
     ),
     events: createRuntimeEvents(),
     logging: createRuntimeLogging(),
-    state: {
-      resolveStateDir,
-      openBlobStore: () => {
-        throw new Error("openBlobStore is only available through the plugin runtime proxy.");
-      },
-      openKeyedStore: () => {
-        throw new Error("openKeyedStore is only available through the plugin runtime proxy.");
-      },
-      openSyncKeyedStore: () => {
-        throw new Error("openSyncKeyedStore is only available through the plugin runtime proxy.");
-      },
-      openChannelIngressQueue: () => {
-        throw new Error(
-          "openChannelIngressQueue is only available through the plugin runtime proxy.",
-        );
-      },
-      openChannelIngressDrain: () => {
-        throw new Error(
-          "openChannelIngressDrain is only available through the plugin runtime proxy.",
-        );
-      },
-    },
+    state,
     tasks,
   } satisfies Omit<
     PluginRuntime,

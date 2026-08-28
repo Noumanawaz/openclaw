@@ -20,6 +20,7 @@ import type { ProxyHandle } from "../infra/net/proxy/proxy-lifecycle.js";
 import { ensureOpenClawCliOnPath } from "../infra/path-env.js";
 import { assertSupportedRuntime } from "../infra/runtime-guard.js";
 import { tryProcessCwd } from "../infra/safe-cwd.js";
+import type { PluginCliLoadSession } from "../plugins/cli-registry-loader.js";
 import { resolveCliArgvInvocation } from "./argv-invocation.js";
 import {
   hasFlag,
@@ -898,6 +899,7 @@ function resolveBuiltInMachineOutput(argv: string[]): boolean {
 async function resolvePluginMachineOutput(params: {
   argv: string[];
   config: OpenClawConfig;
+  session: PluginCliLoadSession;
 }): Promise<boolean> {
   const { primary } = resolveCliArgvInvocation(params.argv);
   if (!primary || isKnownBuiltInCommandRoot(primary)) {
@@ -908,26 +910,10 @@ async function resolvePluginMachineOutput(params: {
     cfg: params.config,
     env: process.env,
     primaryCommand: primary,
+    session: params.session,
   });
   const descriptor = descriptors.find((entry) => entry.name === primary);
   return descriptor ? resolvesMachineOutput(descriptor, params.argv) : false;
-}
-
-async function isPluginCliRoot(params: {
-  primary: string;
-  config: OpenClawConfig;
-}): Promise<boolean | null> {
-  try {
-    const { resolvePluginCliRootOwnerIds } = await loadCliRegistryLoaderModule();
-    const ownerIds = await resolvePluginCliRootOwnerIds({
-      cfg: params.config,
-      env: process.env,
-      primaryCommand: params.primary,
-    });
-    return ownerIds === null ? null : ownerIds.length > 0;
-  } catch {
-    return null;
-  }
 }
 
 function createAllowlistAgnosticCliLookupConfig(config: OpenClawConfig): OpenClawConfig {
@@ -987,16 +973,24 @@ function resolveUnownedCliPrimaryCandidate(argv: string[]): string | null {
 async function resolveUnownedCliPrimary(params: {
   argv: string[];
   config: OpenClawConfig;
+  session: PluginCliLoadSession;
 }): Promise<string | null> {
   const primary = resolveUnownedCliPrimaryCandidate(params.argv);
   if (!primary) {
     return null;
   }
-  const pluginRoot = await isPluginCliRoot({ primary, config: params.config });
-  if (pluginRoot !== false) {
+  try {
+    const { resolvePluginCliRootOwnerIds } = await loadCliRegistryLoaderModule();
+    const ownerIds = await resolvePluginCliRootOwnerIds({
+      cfg: params.config,
+      env: process.env,
+      primaryCommand: primary,
+      session: params.session,
+    });
+    return ownerIds?.length === 0 ? primary : null;
+  } catch {
     return null;
   }
-  return primary;
 }
 
 async function resolveUnownedCliPrimaryError(params: {
@@ -1213,6 +1207,11 @@ async function runCliWithPreparedOutputMode(
   let onExit: (() => void) | null = null;
   let unregisterProxySignalExitBarrier: (() => void) | null = null;
   let bestEffortConfigPromise: Promise<OpenClawConfig> | null = null;
+  let pluginCliSession: PluginCliLoadSession | undefined;
+  const getPluginCliSession = async () => {
+    pluginCliSession ??= (await loadCliRegistryLoaderModule()).createPluginCliLoadSession();
+    return pluginCliSession;
+  };
   const isolateProxyConfigEnv = isGatewayRunInvocation;
   const bestEffortConfigStartupPolicy = resolveCliStartupPolicyForArgv({
     argv: normalizedArgv,
@@ -1225,49 +1224,27 @@ async function runCliWithPreparedOutputMode(
     (normalizedInvocation.primary === "doctor" && hasFlag(normalizedArgv, "--lint"));
   const readBestEffortCliConfig = async (): Promise<OpenClawConfig> => {
     if (!bestEffortConfigPromise) {
-      bestEffortConfigPromise = import("../config/io.js").then((configIo) =>
-        useSourceOnlyBestEffortConfig
-          ? configIo.readSourceConfigBestEffort()
-          : configIo.readBestEffortConfig({
-              ...(isolateProxyConfigEnv ? { isolateEnv: true, observe: false } : {}),
-              ...(bestEffortConfigStartupPolicy.skipConfigGuard ||
-              bestEffortConfigStartupPolicy.validateConfigOnly
-                ? { observe: false }
-                : {}),
-              skipPluginValidation: true,
-            }),
-      );
+      bestEffortConfigPromise = import("../config/io.js").then(async (configIo) => {
+        if (useSourceOnlyBestEffortConfig) {
+          return configIo.readSourceConfigBestEffort();
+        }
+        const read = () =>
+          configIo.readBestEffortConfigSnapshot({
+            ...(isolateProxyConfigEnv ? { isolateEnv: true, observe: false } : {}),
+            ...(bestEffortConfigStartupPolicy.skipConfigGuard ||
+            bestEffortConfigStartupPolicy.validateConfigOnly
+              ? { observe: false }
+              : {}),
+            skipPluginValidation: true,
+          });
+        const session = resolveUnownedCliPrimaryCandidate(normalizedArgv)
+          ? await getPluginCliSession()
+          : undefined;
+        return (session ? await session.readConfig(read) : await read()).config;
+      });
     }
     return await bestEffortConfigPromise;
   };
-  const startupTraces = [startupTrace, options.additionalStartupTrace].filter(
-    (trace): trace is ReturnType<typeof createGatewayDispatchStartupTrace> => Boolean(trace),
-  );
-  if (
-    !isDatabaseInvocation &&
-    (await Promise.all(startupTraces.map((trace) => trace.requiresDiagnosticsConfig()))).some(
-      Boolean,
-    )
-  ) {
-    const config = await withConsoleLogsRoutedToStderr(readBestEffortCliConfig);
-    await Promise.all(startupTraces.map((trace) => trace.configureDiagnosticsTimeline(config)));
-  }
-  if (
-    !isHelpOrVersionInvocation &&
-    !bareSessionInvocation &&
-    normalizedInvocation.primary &&
-    !isKnownBuiltInCommandRoot(normalizedInvocation.primary)
-  ) {
-    const config = await withConsoleLogsRoutedToStderr(readBestEffortCliConfig);
-    if (
-      await withConsoleLogsRoutedToStderr(() =>
-        resolvePluginMachineOutput({ argv: normalizedArgv, config }),
-      )
-    ) {
-      const { routeLogsToStderr } = await loadLoggingModule();
-      routeLogsToStderr();
-    }
-  }
   const uninstallProxySignalHandlers = () => {
     if (onSigterm) {
       process.off("SIGTERM", onSigterm);
@@ -1321,31 +1298,67 @@ async function runCliWithPreparedOutputMode(
     proxyHandle = await startProxy(config);
     installProxySignalHandlers();
   };
-  if (!isHelpOrVersionInvocation && shouldStartProxyForCli(normalizedArgv)) {
-    const config = await withConsoleLogsRoutedToStderr(readBestEffortCliConfig);
-    if (!bareSessionInvocation) {
-      const unownedPrimary = await resolveUnownedCliPrimary({ argv: normalizedArgv, config });
-      if (unownedPrimary) {
-        throw await resolveUnownedCliPrimaryError({
-          argv: normalizedArgv,
-          primary: unownedPrimary,
-          config,
-        });
-      }
-    }
-    await replaceStartedProxy(config?.proxy ?? undefined);
-  }
-
   let uninstallGatewayRunRuntimeHooks: (() => void) | null = null;
-  if (!isHelpOrVersionInvocation && isGatewayRunInvocation) {
-    const { installGatewayRunRuntimeHooks } = await import("./gateway-cli/runtime-hooks.js");
-    uninstallGatewayRunRuntimeHooks = installGatewayRunRuntimeHooks({
-      releaseManagedProxy: stopStartedProxy,
-      refreshManagedProxy: replaceStartedProxy,
-    });
-  }
 
   try {
+    const startupTraces = [startupTrace, options.additionalStartupTrace].filter(
+      (trace): trace is ReturnType<typeof createGatewayDispatchStartupTrace> => Boolean(trace),
+    );
+    if (
+      !isDatabaseInvocation &&
+      (await Promise.all(startupTraces.map((trace) => trace.requiresDiagnosticsConfig()))).some(
+        Boolean,
+      )
+    ) {
+      const config = await withConsoleLogsRoutedToStderr(readBestEffortCliConfig);
+      await Promise.all(startupTraces.map((trace) => trace.configureDiagnosticsTimeline(config)));
+    }
+    if (
+      !isHelpOrVersionInvocation &&
+      !bareSessionInvocation &&
+      normalizedInvocation.primary &&
+      !isKnownBuiltInCommandRoot(normalizedInvocation.primary)
+    ) {
+      const config = await withConsoleLogsRoutedToStderr(readBestEffortCliConfig);
+      const session = await withConsoleLogsRoutedToStderr(getPluginCliSession);
+      if (
+        await withConsoleLogsRoutedToStderr(() =>
+          resolvePluginMachineOutput({ argv: normalizedArgv, config, session }),
+        )
+      ) {
+        const { routeLogsToStderr } = await loadLoggingModule();
+        routeLogsToStderr();
+      }
+    }
+    if (!isHelpOrVersionInvocation && shouldStartProxyForCli(normalizedArgv)) {
+      const config = await withConsoleLogsRoutedToStderr(readBestEffortCliConfig);
+      if (!bareSessionInvocation) {
+        const unownedPrimary = resolveUnownedCliPrimaryCandidate(normalizedArgv)
+          ? await resolveUnownedCliPrimary({
+              argv: normalizedArgv,
+              config,
+              session: await getPluginCliSession(),
+            })
+          : null;
+        if (unownedPrimary) {
+          throw await resolveUnownedCliPrimaryError({
+            argv: normalizedArgv,
+            primary: unownedPrimary,
+            config,
+          });
+        }
+      }
+      await replaceStartedProxy(config?.proxy ?? undefined);
+    }
+
+    if (!isHelpOrVersionInvocation && isGatewayRunInvocation) {
+      const { installGatewayRunRuntimeHooks } = await import("./gateway-cli/runtime-hooks.js");
+      uninstallGatewayRunRuntimeHooks = installGatewayRunRuntimeHooks({
+        releaseManagedProxy: stopStartedProxy,
+        refreshManagedProxy: replaceStartedProxy,
+      });
+    }
+
     if (shouldUseRootHelpFastPath(normalizedArgv)) {
       const { loadRootHelpRenderOptionsForConfigSensitivePlugins } =
         await loadRootHelpLiveConfigModule();
@@ -1401,7 +1414,11 @@ async function runCliWithPreparedOutputMode(
       const unownedPrimaryCandidate = resolveUnownedCliPrimaryCandidate(normalizedArgv);
       if (unownedPrimaryCandidate) {
         const config = await readBestEffortCliConfig();
-        const unownedPrimary = await resolveUnownedCliPrimary({ argv: normalizedArgv, config });
+        const unownedPrimary = await resolveUnownedCliPrimary({
+          argv: normalizedArgv,
+          config,
+          session: await getPluginCliSession(),
+        });
         if (unownedPrimary) {
           throw await resolveUnownedCliPrimaryError({
             argv: normalizedArgv,
@@ -1635,6 +1652,7 @@ async function runCliWithPreparedOutputMode(
             mode: "lazy",
             primary,
             skipPluginValidation: startupPolicy.skipConfigGuard,
+            session: pluginCliSession,
           });
         });
         if (config) {
@@ -1671,6 +1689,7 @@ async function runCliWithPreparedOutputMode(
         program,
       );
       stopStartupProgress();
+      pluginCliSession?.close();
 
       let completedHelpOrVersion = false;
       try {
@@ -1698,6 +1717,7 @@ async function runCliWithPreparedOutputMode(
       stopStartupProgress();
     }
   } finally {
+    pluginCliSession?.close();
     uninstallGatewayRunRuntimeHooks?.();
     await stopStartedProxy();
     await closeCliResources();

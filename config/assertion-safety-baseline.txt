@@ -3494,7 +3494,6 @@ src/plugins/channel-presence-policy.ts	2
 src/plugins/channel-validation.ts	1
 src/plugins/clawhub.ts	10
 src/plugins/cli-gateway-nodes-runtime.ts	2
-src/plugins/cli.ts	1
 src/plugins/command-registration.ts	3
 src/plugins/computer-use-contract.ts	3
 src/plugins/config-normalization-shared.ts	20
@@ -3546,7 +3545,7 @@ src/plugins/loader-channel-setup.ts	17
 src/plugins/loader-cli-registry.ts	2
 src/plugins/loader-discovery.ts	1
 src/plugins/loader-load-context.ts	5
-src/plugins/loader-module-runtime.ts	13
+src/plugins/loader-module-runtime.ts	12
 src/plugins/loader-records.ts	1
 src/plugins/loader-runtime-candidate.ts	1
 src/plugins/loader-runtime-load.ts	2
@@ -3575,7 +3574,7 @@ src/plugins/plugin-metadata-snapshot.runtime.ts	2
 src/plugins/plugin-module-loader-cache.ts	1
 src/plugins/plugin-package-update.ts	1
 src/plugins/plugin-peer-link.ts	6
-src/plugins/plugin-sdk-native-resolver.ts	5
+src/plugins/plugin-sdk-native-resolver.ts	3
 src/plugins/prepared-message-tool-catalog.ts	1
 src/plugins/provider-api-key-auth.ts	2
 src/plugins/provider-auth-choice-helpers.ts	12

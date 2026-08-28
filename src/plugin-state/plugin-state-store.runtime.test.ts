@@ -1,9 +1,8 @@
 // Plugin state runtime tests cover runtime-backed plugin state storage.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { resolveStateDir } from "../config/paths.js";
+import { createLazyPluginRuntime } from "../plugins/loader-module-runtime.js";
 import type { PluginRecord } from "../plugins/registry-types.js";
 import { createPluginRegistry } from "../plugins/registry.js";
-import type { PluginRuntime } from "../plugins/runtime/types.js";
 import { closeOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.js";
 import { openOpenClawStateDatabase } from "../state/openclaw-state-db.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
@@ -54,20 +53,11 @@ function createPluginRecord(
 function createTestPluginRegistry() {
   return createPluginRegistry({
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
-    runtime: {
-      state: {
-        resolveStateDir,
-        openBlobStore: () => {
-          throw new Error("registry plugin runtime proxy should bind openBlobStore");
-        },
-        openKeyedStore: () => {
-          throw new Error("registry plugin runtime proxy should bind openKeyedStore");
-        },
-        openSyncKeyedStore: () => {
-          throw new Error("registry plugin runtime proxy should bind openSyncKeyedStore");
-        },
+    runtime: createLazyPluginRuntime({
+      loadPluginModule: () => {
+        throw new Error("state stores must not materialize the broad runtime");
       },
-    } as unknown as PluginRuntime,
+    }),
   });
 }
 

@@ -1,6 +1,5 @@
 // Plugin runtime load context helpers resolve agent and workspace facts for runtime activation.
 import { getRuntimeConfig } from "../../config/config.js";
-import { resolveConfigWidePluginManifestRegistry } from "../../config/io.plugin-metadata.js";
 import {
   fingerprintPluginAutoEnableConfig,
   fingerprintPluginAutoEnableEnv,
@@ -17,7 +16,6 @@ import type { PluginManifestRegistry } from "../manifest-registry.js";
 import { registerPluginMetadataProcessMemoLifecycleClear } from "../plugin-metadata-lifecycle.js";
 import {
   isPluginMetadataSnapshotCompatible,
-  rebasePluginMetadataSnapshotManifestRegistry,
   resolvePluginMetadataSnapshot,
 } from "../plugin-metadata-snapshot.js";
 import type { PluginMetadataSnapshot } from "../plugin-metadata-snapshot.types.js";
@@ -186,6 +184,8 @@ type PluginRuntimeLoadContextOptions = {
   logger?: PluginLogger;
   manifestRegistry?: PluginManifestRegistry;
   metadataSnapshot?: PluginMetadataSnapshot;
+  allowCurrentMetadata?: boolean;
+  resolveMetadataSnapshot?: typeof resolvePluginMetadataSnapshot;
   preferBuiltPluginArtifacts?: boolean;
 };
 
@@ -214,25 +214,17 @@ export function resolvePluginRuntimeLoadContext(
     config: OpenClawConfig;
     index?: PluginMetadataSnapshot["index"];
   }): PluginMetadataSnapshot => {
-    const snapshot = resolvePluginMetadataSnapshot({
+    return (options?.resolveMetadataSnapshot ?? resolvePluginMetadataSnapshot)({
       config: params.config,
       env,
       workspaceDir: rawWorkspaceDir,
       allowWorkspaceScopedCurrent: true,
+      ...(options?.allowCurrentMetadata !== undefined
+        ? { allowCurrent: options.allowCurrentMetadata }
+        : {}),
       ...(params.index ? { index: params.index } : {}),
       ...(options?.onlyPluginIds !== undefined ? { pluginIds: options.onlyPluginIds } : {}),
     });
-    if (options?.workspaceDir !== undefined) {
-      return snapshot;
-    }
-    return rebasePluginMetadataSnapshotManifestRegistry(
-      snapshot,
-      resolveConfigWidePluginManifestRegistry({
-        config: params.config,
-        env,
-        ...(options?.onlyPluginIds !== undefined ? { pluginIds: options.onlyPluginIds } : {}),
-      }),
-    );
   };
   const initialMetadataSnapshot =
     options?.metadataSnapshot ??

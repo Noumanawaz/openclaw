@@ -7,11 +7,11 @@ import type {
   LegacyConfigIssue,
   OpenClawConfig,
 } from "../../../config/types.js";
-import { withPluginMetadataSnapshotScope } from "../../../plugins/current-plugin-metadata-snapshot.js";
 import {
   collectDoctorConfigRepairPluginIds,
   listPluginDoctorLegacyConfigRules,
 } from "../../../plugins/doctor-contract-registry.js";
+import type { PluginManifestRegistry } from "../../../plugins/manifest-registry.js";
 import type { PluginMetadataSnapshot } from "../../../plugins/plugin-metadata-snapshot.types.js";
 import { listDoctorConfiguredChannelIds } from "./configured-channel-ids.js";
 
@@ -22,15 +22,20 @@ function collectConfiguredChannelIds(raw: unknown): ReadonlySet<string> {
 function collectPluginLegacyConfigRules(
   raw: unknown,
   touchedPaths?: ReadonlyArray<ReadonlyArray<string>>,
+  manifestRegistry?: Pick<PluginManifestRegistry, "plugins">,
 ): LegacyConfigRule[] {
   const channelIds = collectConfiguredChannelIds(raw);
-  const pluginIds = collectDoctorConfigRepairPluginIds(raw, touchedPaths).filter(
+  const pluginIds = collectDoctorConfigRepairPluginIds(raw, touchedPaths, manifestRegistry).filter(
     (pluginId) => !channelIds.has(pluginId),
   );
   if (pluginIds.length === 0) {
     return [];
   }
-  return listPluginDoctorLegacyConfigRules({ config: raw as OpenClawConfig, pluginIds });
+  return listPluginDoctorLegacyConfigRules({
+    config: raw as OpenClawConfig,
+    pluginIds,
+    ...(manifestRegistry ? { manifestRegistry } : {}),
+  });
 }
 
 /** Find legacy config issues using core rules plus relevant channel/plugin doctor contracts. */
@@ -38,13 +43,14 @@ export function findDoctorLegacyConfigIssues(
   raw: unknown,
   sourceRaw?: unknown,
   touchedPaths?: ReadonlyArray<ReadonlyArray<string>>,
+  manifestRegistry?: Pick<PluginManifestRegistry, "plugins">,
 ): LegacyConfigIssue[] {
   return findLegacyConfigIssues(
     raw,
     sourceRaw,
     [
-      ...collectChannelLegacyConfigRules(raw, touchedPaths),
-      ...collectPluginLegacyConfigRules(raw, touchedPaths),
+      ...collectChannelLegacyConfigRules(raw, touchedPaths, undefined, manifestRegistry),
+      ...collectPluginLegacyConfigRules(raw, touchedPaths, manifestRegistry),
     ],
     touchedPaths,
   );
@@ -58,12 +64,12 @@ export function addDoctorLegacyIssues(
     return snapshot;
   }
   const resolvedRaw = snapshot.sourceConfig ?? snapshot.config ?? {};
-  const collect = () => {
-    const sourceRaw = snapshot.parsed ?? resolvedRaw;
-    const legacyIssues = findDoctorLegacyConfigIssues(resolvedRaw, sourceRaw);
-    return legacyIssues.length === 0 ? snapshot : { ...snapshot, legacyIssues };
-  };
-  return pluginMetadataSnapshot
-    ? withPluginMetadataSnapshotScope(pluginMetadataSnapshot, collect, { config: resolvedRaw })
-    : collect();
+  const sourceRaw = snapshot.parsed ?? resolvedRaw;
+  const legacyIssues = findDoctorLegacyConfigIssues(
+    resolvedRaw,
+    sourceRaw,
+    undefined,
+    pluginMetadataSnapshot?.manifestRegistry,
+  );
+  return legacyIssues.length === 0 ? snapshot : { ...snapshot, legacyIssues };
 }
