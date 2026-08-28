@@ -55,6 +55,9 @@ describe("crabline transport", () => {
           to: expect.stringMatching(/^[1-9]\d+$/u),
         });
         expect(delivery.replyTo).toBe(delivery.to);
+        expect(transport.buildAgentDelivery({ target: "dm:alice", threadId: "42" })).toMatchObject({
+          threadId: "42",
+        });
 
         await expect(
           fs.access(path.join(outputDir, "crabline-provider-server.json")),
