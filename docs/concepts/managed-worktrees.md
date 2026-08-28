@@ -67,7 +67,7 @@ The resulting managed worktree is owned by the session, and every agent run in t
 
 If **New session** reports `git worktree add failed`, read the termination reason and the final Git error lines. `Preparing worktree` and `Updating files` are progress, not the cause of failure. Error messages collapse carriage-return progress redraws and bound the diagnostic tail so it cannot flood the banner.
 
-`timed out after 120 seconds` means the Git command reached OpenClaw's execution limit. Check repository access and available disk space on the Gateway host. A signal or nonzero exit status alone does not establish a timeout; use any accompanying `fatal:` or `error:` detail to investigate. An output-limit error means the command exceeded its output capture limit.
+`timed out after 300 seconds` means a worktree checkout reached its five-minute limit. Other Git commands report `timed out after 120 seconds` at their two-minute limit. Check repository access and available disk space on the Gateway host. A signal or nonzero exit status alone does not establish a timeout; use any accompanying `fatal:` or `error:` detail to investigate. An output-limit error means the command exceeded its output capture limit.
 
 Before another creation attempt, inspect `git -C <repo-root> worktree list` and `git -C <repo-root> branch --list 'openclaw/*'` for partial state. A failed creation does not guarantee that its checkout and branch were removed. Do not delete a checkout or branch without checking whether it contains work you need.
 
