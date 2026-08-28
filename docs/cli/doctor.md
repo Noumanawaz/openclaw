@@ -306,6 +306,11 @@ on the system temporary volume as well as the volume holding OpenClaw state.
 Staging is removed when the operation finishes and is never used as a runtime
 store or resumed after an interruption; retries use the original sources and
 committed session data. Individual transcript records are still parsed in memory.
+After import, Doctor checkpoints and incrementally vacuums databases that already
+support auto-vacuum, retaining full integrity and foreign-key checks before and
+after cleanup. Databases without auto-vacuum still need a full `VACUUM` to enable
+it. Incremental cleanup frees unused pages but does not repack partially filled
+pages; explicit session and shared-state `compact` modes still run a full `VACUUM`.
 
 The regular `openclaw doctor` pass also reports canonical SQLite transcripts
 whose initial session header was never persisted. `openclaw doctor --fix`
