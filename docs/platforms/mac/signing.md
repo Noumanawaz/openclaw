@@ -7,7 +7,7 @@ title: "macOS signing"
 
 # mac signing (debug builds)
 
-[`scripts/package-mac-app.sh`](https://github.com/openclaw/openclaw/blob/main/scripts/package-mac-app.sh) builds and packages the app to a fixed path (`dist/OpenClaw.app`), then calls [`scripts/codesign-mac-app.sh`](https://github.com/openclaw/openclaw/blob/main/scripts/codesign-mac-app.sh) to sign it. TCC permissions are tied to the bundle ID and code signature; keeping both stable (and the app at a fixed path) across rebuilds keeps macOS from forgetting TCC grants (notifications, accessibility, screen recording, mic, speech).
+[`scripts/package-mac-app.sh`](https://github.com/openclaw/openclaw/blob/main/scripts/package-mac-app.sh) builds a staged app, calls [`scripts/codesign-mac-app.sh`](https://github.com/openclaw/openclaw/blob/main/scripts/codesign-mac-app.sh), and verifies the signed worker before replacing `dist/OpenClaw.app`. TCC permissions are tied to the bundle ID and code signature; keeping both stable (and the app at a fixed path) across rebuilds keeps macOS from forgetting TCC grants (notifications, accessibility, screen recording, mic, speech).
 
 - Debug bundle identifier defaults to `ai.openclaw.mac.debug` (override with `BUNDLE_ID=...`).
 - Node: `>=22.22.3 <23`, `>=24.15.0 <25`, or `>=25.9.0` (repo `package.json` `engines`). The packager also builds the Control UI (`pnpm ui:build`).
@@ -17,6 +17,7 @@ title: "macOS signing"
 - `CODESIGN_TIMESTAMP=auto` (default) enables trusted timestamps for Developer ID Application signatures selected by name or certificate hash. Set `on`/`off` to force either way.
 - Stamps Info.plist with `OpenClawBuildTimestamp` (ISO8601 UTC) and `OpenClawGitCommit` (short hash, `unknown` if unavailable) so the About tab can show build, git, and debug/release channel.
 - Runs a Team ID audit after signing and fails if any Mach-O inside the bundle has a different Team ID. Set `SKIP_TEAM_ID_CHECK=1` to bypass.
+- Signs the private worker's Node executables and native addons before sealing the app. Worker executables receive JIT memory entitlements; native libraries retain library validation and must share the app's signing identity. Packaging verifies each requested architecture's native capabilities and worker readiness in temporary state before and after signing.
 
 ## Usage
 

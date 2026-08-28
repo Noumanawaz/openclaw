@@ -138,6 +138,65 @@ exit 0
 }
 
 describe("codesign-mac-app temp file hygiene", () => {
+  it.runIf(process.platform === "darwin")(
+    "signs nested worker code before the app without disabling library validation",
+    () => {
+      const tempRoot = tempDirs.make("openclaw-codesign-worker-");
+      const app = path.join(tempRoot, "Fake.app");
+      const binDir = path.join(tempRoot, "bin");
+      const captureDir = path.join(tempRoot, "capture");
+      const logPath = path.join(captureDir, "codesign.log");
+      const argsPath = path.join(captureDir, "args.log");
+      const node = path.join(app, "Contents/Resources/node-worker/arm64/bin/node");
+      const addon = path.join(app, "Contents/Resources/node-worker/arm64/lib/addon.node");
+      for (const directory of [binDir, captureDir, path.dirname(node), path.dirname(addon)]) {
+        mkdirSync(directory, { recursive: true });
+      }
+      // Mach-O headers let the real file classifier distinguish executable and
+      // addon code; only codesign is replaced, so no identity or signature is used.
+      for (const [filename, fileType] of [
+        [node, 2],
+        [addon, 6],
+      ] as const) {
+        const header = Buffer.alloc(32);
+        header.writeUInt32LE(0xfeedfacf, 0);
+        header.writeUInt32LE(0x0100000c, 4);
+        header.writeUInt32LE(fileType, 12);
+        writeFileSync(filename, header);
+      }
+      installFakeCodesign(binDir);
+      const result = spawnSync("bash", [scriptPath, app], {
+        encoding: "utf8",
+        env: {
+          HOME: tempRoot,
+          PATH: `${binDir}:/usr/bin:/bin`,
+          TMPDIR: tempRoot,
+          SIGN_IDENTITY: "Developer ID Application: Fixture",
+          SKIP_TEAM_ID_CHECK: "1",
+          CODESIGN_CAPTURE_DIR: captureDir,
+          CODESIGN_LOG: logPath,
+          CODESIGN_ARGS_LOG: argsPath,
+        },
+      });
+      expect(result.status, result.stderr).toBe(0);
+      const lines = readFileSync(logPath, "utf8").trim().split("\n");
+      const nodeLine = lines.find((line) => line.startsWith(`entitled\t${node}\t`));
+      expect(nodeLine).toBeDefined();
+      const entitlements = readFileSync(
+        expectDefined(nodeLine?.split("\t")[3], "Node entitlements"),
+        "utf8",
+      );
+      expect(entitlements).toContain("com.apple.security.cs.allow-jit");
+      expect(entitlements).not.toContain("disable-library-validation");
+      expect(entitlements).not.toContain("automation.apple-events");
+      expect(lines).toContain(`plain\t${addon}`);
+      expect(lines.at(-1)).toMatch(new RegExp(`^entitled\\t${app}\\t`));
+      const args = readFileSync(argsPath, "utf8");
+      expect(args).toContain(`--verify --strict ${node}`);
+      expect(args).toContain(`--verify --strict ${addon}`);
+    },
+  );
+
   it("does not generate unused entitlement plist files", () => {
     const script = readFileSync(scriptPath, "utf8");
 

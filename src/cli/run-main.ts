@@ -1234,7 +1234,9 @@ async function runCliWithPreparedOutputMode(
               bestEffortConfigStartupPolicy.validateConfigOnly
                 ? { observe: false }
                 : {}),
-              skipPluginValidation: true,
+              ...(bestEffortConfigStartupPolicy.validateConfigOnly
+                ? { pluginValidation: "core-only" }
+                : { skipPluginValidation: true }),
             }),
       );
     }

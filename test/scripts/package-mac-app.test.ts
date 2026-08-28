@@ -8,6 +8,29 @@ import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 const scriptPath = "scripts/package-mac-app.sh";
 
+describe("packaged worker freshness", () => {
+  it("rebuilds dirty JavaScript even when the old SKIP_TSC shortcut is requested", () => {
+    const root = tempDirs.make("openclaw-package-worker-freshness-");
+    const script = readFileSync(scriptPath, "utf8");
+    const start = script.indexOf('if [[ "${SKIP_TSC:-0}"');
+    const end = script.indexOf('node - "$ROOT_DIR/dist/build-info.json"', start);
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        `
+      set -euo pipefail
+      run_pnpm() { printf '%s\\n' 'fresh dirty worker' > "$HOME/worker.js"; }
+      ${script.slice(start, end)}
+    `,
+      ],
+      { encoding: "utf8", env: { HOME: root, PATH: "/usr/bin:/bin", SKIP_TSC: "1" } },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(existsSync(path.join(root, "worker.js"))).toBe(true);
+  });
+});
+
 function makePlist(): string {
   const dir = tempDirs.make("openclaw-plistbuddy-");
   const plist = path.join(dir, "Info.plist");
@@ -231,6 +254,9 @@ function runSourceProvenanceStampHarness(corruptKey?: string) {
       printf '%s' "$value"
     }
     APP_ROOT=/tmp/OpenClaw.app
+    ROOT_DIR=/unused
+    node() { echo fixture-build-id; }
+    plist_set_or_add_string() { :; }
     BUILD_TS=2026-08-13T00:00:00.000Z
     BUILD_GIT_COMMIT=${JSON.stringify(openClawCommit)}
     PEEKABOO_SOURCE_COMMIT=${JSON.stringify(peekabooCommit)}
@@ -428,7 +454,7 @@ function runRealCompiledPeekabooHarness(
 function getStopPackagedAppBlock(): string {
   const script = readFileSync(scriptPath, "utf8");
   const start = script.indexOf("running_packaged_app_pids()");
-  const end = script.indexOf("\nstop_packaged_app_if_running\n");
+  const end = script.indexOf('if [[ -n "${SIGN_IDENTITY:-}" ]]');
 
   expect(start).toBeGreaterThanOrEqual(0);
   expect(end).toBeGreaterThan(start);
@@ -601,7 +627,7 @@ function runStopPackagedAppHarness(killZeroStatus: 0 | 1) {
 
   return runHelper(`
     set -euo pipefail
-    APP_ROOT=${JSON.stringify(appRoot)}
+    APP_DESTINATION=${JSON.stringify(appRoot)}
     PRODUCT=OpenClaw
     PATH=${JSON.stringify(`${toolsDir}:/usr/bin:/bin`)}
     kill() {
@@ -662,6 +688,7 @@ function runSwiftPackageResolutionHarness(mutateLockfile: boolean) {
     ROOT_DIR=${JSON.stringify(root)}
     PATH=${JSON.stringify(`${toolsDir}:/usr/bin:/bin`)}
     ${getSwiftPackageResolutionBlock()}
+    APP_STAGE_DIR=""
     run_with_locked_swift_packages swift package --scratch-path "$ROOT_DIR/apps/macos/.build/arm64" resolve
   `);
 
@@ -1401,7 +1428,7 @@ describe("package-mac-app plist stamping", () => {
     );
 
     expect(script).not.toContain("killall -q OpenClaw");
-    expect(stopBlock).toContain('local app_binary="$APP_ROOT/Contents/MacOS/OpenClaw"');
+    expect(stopBlock).toContain('local app_binary="$APP_DESTINATION/Contents/MacOS/OpenClaw"');
     expect(stopBlock).toContain('pgrep -x "$PRODUCT"');
     expect(stopBlock).toContain('grep -Fx "$app_binary"');
     expect(stopBlock).toContain(
@@ -1412,7 +1439,10 @@ describe("package-mac-app plist stamping", () => {
   it("passes an explicit signing identity unchanged to the signer", () => {
     const script = readFileSync(scriptPath, "utf8");
     const start = script.indexOf('if [[ -n "${SIGN_IDENTITY:-}" ]]');
-    const signingBlock = script.slice(start, script.indexOf('echo "✅ Bundle ready', start));
+    const signingBlock = script.slice(
+      start,
+      script.indexOf("codesign --verify --deep --strict", start),
+    );
     const tempRoot = tempDirs.make("openclaw-package-signing-identity-");
     const scriptsDir = path.join(tempRoot, "scripts");
     const signerPath = path.join(scriptsDir, "codesign-mac-app.sh");
@@ -1428,6 +1458,10 @@ describe("package-mac-app plist stamping", () => {
       set -euo pipefail
       ROOT_DIR=${JSON.stringify(tempRoot)}
       APP_ROOT=${JSON.stringify(path.join(tempRoot, "OpenClaw.app"))}
+      APP_DESTINATION="$APP_ROOT"
+      stop_packaged_app_if_running() { :; }
+      replace_mac_app_bundle() { :; }
+      codesign() { :; }
       SIGN_IDENTITY=${JSON.stringify(identity)}
       export SIGN_IDENTITY
       ${signingBlock}

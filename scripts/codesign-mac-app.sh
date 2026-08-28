@@ -193,6 +193,7 @@ fi
 ENT_TMP_DIR=$(mktemp -d -t openclaw-entitlements.XXXXXX)
 trap cleanup EXIT
 ENT_TMP_APP="$ENT_TMP_DIR/app.plist"
+ENT_TMP_NODE="$ENT_TMP_DIR/node.plist"
 CODESIGN_OUTPUT="$ENT_TMP_DIR/codesign-output"
 
 options_args=()
@@ -235,6 +236,17 @@ if [[ "$DISABLE_LIBRARY_VALIDATION" == "1" ]]; then
 fi
 
 APP_ENTITLEMENTS="$ENT_TMP_APP"
+
+# V8 and bundled standalone JS executables need JIT memory under hardened
+# runtime. All native libraries are re-signed below; library validation stays on.
+cat > "$ENT_TMP_NODE" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>com.apple.security.cs.allow-jit</key><true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
+</dict></plist>
+PLIST
 
 # clear extended attributes to avoid stale signatures
 xattr -cr "$APP_BUNDLE" 2>/dev/null || true
@@ -393,6 +405,23 @@ fi
 CUA_DRIVER="$APP_BUNDLE/Contents/Resources/cua-driver"
 if [ -f "$CUA_DRIVER" ]; then
   echo "Signing embedded CUA driver"; sign_plain_item "$CUA_DRIVER"
+fi
+
+# Seal all native payloads before the enclosing app; npm packages can carry
+# standalone executables and addons below arbitrarily nested dependency roots.
+WORKER_ROOT="$APP_BUNDLE/Contents/Resources/node-worker"
+if [[ -d "$WORKER_ROOT" ]]; then
+  while IFS= read -r -d '' worker_file; do
+    worker_kind="$(/usr/bin/file -b "$worker_file")"
+    if [[ "$worker_kind" == *Mach-O* ]]; then
+      if [[ "$worker_kind" == *executable* ]]; then
+        sign_item "$worker_file" "$ENT_TMP_NODE"
+      else
+        sign_plain_item "$worker_file"
+      fi
+      codesign --verify --strict "$worker_file"
+    fi
+  done < <(find "$WORKER_ROOT" -type f -print0)
 fi
 
 # Sign main binary

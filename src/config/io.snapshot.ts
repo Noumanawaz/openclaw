@@ -32,7 +32,11 @@ import type {
   ReadConfigFileSnapshotWithPluginMetadataResult,
 } from "./io.types.js";
 import { warnIfConfigFromFuture } from "./io.warnings.js";
-import { migrateLegacyContextBudgetConfig, migratePersistedImplicitMainRoster } from "./legacy.js";
+import {
+  findLegacyConfigIssues,
+  migrateLegacyContextBudgetConfig,
+  migratePersistedImplicitMainRoster,
+} from "./legacy.js";
 import { materializeRuntimeConfig } from "./materialize.js";
 import { ConfigMutationConflictError } from "./mutation-conflict.js";
 import type { ConfigFileSnapshot, LegacyConfigIssue, OpenClawConfig } from "./types.js";
@@ -212,7 +216,9 @@ export async function readConfigFileSnapshotInternal(
     );
     if (!validated.ok) {
       const legacyIssues = await deps.measure("config.snapshot.read.legacy-issues", () =>
-        collectInvalidConfigLegacyIssues(effectiveConfigRaw, effectiveParsed),
+        context.options.pluginValidation === "core-only"
+          ? findLegacyConfigIssues(effectiveConfigRaw, effectiveParsed)
+          : collectInvalidConfigLegacyIssues(effectiveConfigRaw, effectiveParsed),
       );
       // Invalid snapshots stay inspectable, but rejected env.vars must not become runtime state.
       restoreEnvChangesIfUnchanged({
@@ -453,11 +459,8 @@ export async function readBestEffortConfigSnapshotFromContext(
     };
   }
   return {
-    config: context.finalizeLoadedRuntimeConfig(
-      materializeRuntimeConfig(result.snapshot.sourceConfig, {
-        manifestRegistry: result.pluginMetadataSnapshot?.manifestRegistry,
-      }),
-    ),
+    // The snapshot already materialized under the caller's plugin-validation policy.
+    config: context.finalizeLoadedRuntimeConfig(result.snapshot.config),
     sourceConfig: result.snapshot.sourceConfig,
     configDiagnostics: null,
   };

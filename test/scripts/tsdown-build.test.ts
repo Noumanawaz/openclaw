@@ -1914,6 +1914,23 @@ describe("resolveTsdownBuildInvocation", () => {
     await expect(fsPromises.readFile(coreFile, "utf8")).resolves.toBe("keep\n");
   });
 
+  it.each(["OpenClaw.app", "candidates/OpenClaw.app"])(
+    "keeps the packaged Mac app intact at %s while rebuilding its replacement runtime",
+    async (appPath) => {
+      const rootDir = createTempDir("openclaw-tsdown-app-pairing-");
+      const appFile = path.join(rootDir, "dist", appPath, "Contents", "Resources", "worker.js");
+      const staleFile = path.join(rootDir, "dist", "stale.js");
+      await fsPromises.mkdir(path.dirname(appFile), { recursive: true });
+      await fsPromises.writeFile(appFile, "previous signed worker\n");
+      await fsPromises.writeFile(staleFile, "stale\n");
+
+      cleanTsdownOutputRoots({ cwd: rootDir, roots: ["dist"] });
+
+      await expect(fsPromises.readFile(appFile, "utf8")).resolves.toBe("previous signed worker\n");
+      await expectPathMissing(staleFile);
+    },
+  );
+
   it("cleans an absolute explicit output directory without rebasing it under cwd", async () => {
     const rootDir = createTempDir("openclaw-tsdown-absolute-clean-");
     const outputDir = path.join(rootDir, "custom-dist");

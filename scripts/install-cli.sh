@@ -1125,8 +1125,10 @@ install_node() {
   local expected_sha
   local actual_sha
 
-  os="$(os_detect)"
-  arch="$(arch_detect)"
+  # Packaging provisions each requested architecture in a fresh private prefix.
+  # It must execute that Node (Rosetta for x64 on ARM), never link the host runtime.
+  os="${1:-$(os_detect)}"
+  arch="${2:-$(arch_detect)}"
   select_node_version_for_platform "$os" "$arch"
   if ! node_version_is_supported "$NODE_VERSION"; then
     fail "Node ${NODE_VERSION} is unsupported; use ${SUPPORTED_NODE_VERSION_LABEL}."
