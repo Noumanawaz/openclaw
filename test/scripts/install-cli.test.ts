@@ -539,6 +539,7 @@ describe("install-cli.sh", () => {
       os_detect() { printf 'linux\n'; }
       arch_detect() { printf 'armv7l\n'; }
       install_node() {
+        printf 'target=%s/%s\n' "$@"
         printf 'selected=%s\n' "$NODE_VERSION"
         printf 'first-path=%s\n' "\${PATH%%:*}"
         return 17
@@ -547,6 +548,7 @@ describe("install-cli.sh", () => {
     `);
 
     expect(result.status).toBe(17);
+    expect(result.stdout).toContain("target=linux/armv7l");
     expect(result.stdout).toContain("selected=22.23.2");
     expect(result.stdout).toContain("first-path=");
     expect(result.stdout).toContain("/tools/node-v22.23.2/bin");
@@ -573,7 +575,7 @@ describe("install-cli.sh", () => {
       set -euo pipefail
       source "${SCRIPT_PATH}"
       NODE_VERSION=24.14.1
-      install_node
+      install_node linux x64
     `);
 
     expect(result.status).toBe(1);
@@ -1069,13 +1071,11 @@ describe("install-cli.sh", () => {
           `cd ${JSON.stringify(process.cwd())}`,
           `source ${JSON.stringify(SCRIPT_PATH)}`,
           `export PATH=${JSON.stringify(bin)}`,
-          "os_detect() { printf 'linux\\n'; }",
-          "arch_detect() { printf 'x64\\n'; }",
           "is_musl_linux() { return 0; }",
           "is_root() { return 1; }",
           `PREFIX=${JSON.stringify(prefix)}`,
           `APK_NODE_BIN_DIR=${JSON.stringify(bin)}`,
-          "install_node",
+          "install_node linux x64",
         ].join("\n"),
         {
           APK_LOG: apkLog,
@@ -1180,13 +1180,11 @@ describe("install-cli.sh", () => {
           `cd ${JSON.stringify(process.cwd())}`,
           `source ${JSON.stringify(SCRIPT_PATH)}`,
           `export PATH=${JSON.stringify(`${nodePrefixBin}:${oldBin}:${bin}`)}`,
-          "os_detect() { printf 'linux\\n'; }",
-          "arch_detect() { printf 'x64\\n'; }",
           "is_musl_linux() { return 0; }",
           "is_root() { return 1; }",
           `PREFIX=${JSON.stringify(prefix)}`,
           "NODE_VERSION=22.22.3",
-          "install_node",
+          "install_node linux x64",
         ].join("\n"),
         {
           APK_LOG: apkLog,
@@ -1261,14 +1259,12 @@ describe("install-cli.sh", () => {
           `cd ${JSON.stringify(process.cwd())}`,
           `source ${JSON.stringify(SCRIPT_PATH)}`,
           `export PATH=${JSON.stringify(bin)}`,
-          "os_detect() { printf 'linux\\n'; }",
-          "arch_detect() { printf 'x64\\n'; }",
           "is_musl_linux() { return 0; }",
           "is_root() { return 0; }",
           `PREFIX=${JSON.stringify(prefix)}`,
           `APK_NODE_BIN_DIR=${JSON.stringify(bin)}`,
           "NODE_VERSION=22.22.3",
-          "install_node",
+          "install_node linux x64",
         ].join("\n"),
         {
           APK_LOG: apkLog,
@@ -1408,14 +1404,12 @@ describe("install-cli.sh", () => {
           `cd ${JSON.stringify(process.cwd())}`,
           `source ${JSON.stringify(SCRIPT_PATH)}`,
           `export PATH=${JSON.stringify(bin)}`,
-          "os_detect() { printf 'linux\\n'; }",
-          "arch_detect() { printf 'x64\\n'; }",
           "is_musl_linux() { return 0; }",
           "is_root() { return 0; }",
           `PREFIX=${JSON.stringify(prefix)}`,
           `APK_NODE_BIN_DIR=${JSON.stringify(bin)}`,
           "NODE_VERSION=22.22.3",
-          "install_node",
+          "install_node linux x64",
         ].join("\n"),
         {
           APK_LOG: apkLog,
@@ -1487,8 +1481,6 @@ describe("install-cli.sh", () => {
           "set -euo pipefail",
           `cd ${JSON.stringify(process.cwd())}`,
           `source ${JSON.stringify(SCRIPT_PATH)}`,
-          "os_detect() { printf 'linux\\n'; }",
-          "arch_detect() { printf 'x64\\n'; }",
           "is_musl_linux() { return 1; }",
           "detect_downloader() { :; }",
           "require_bin() { :; }",
@@ -1510,7 +1502,7 @@ describe("install-cli.sh", () => {
           "}",
           `PREFIX=${JSON.stringify(prefix)}`,
           "NODE_VERSION=22.22.3",
-          "install_node",
+          "install_node linux x64",
         ].join("\n"),
         {
           NEW_NODE: newNode,
@@ -1558,8 +1550,6 @@ describe("install-cli.sh", () => {
           "set -euo pipefail",
           `cd ${JSON.stringify(process.cwd())}`,
           `source ${JSON.stringify(SCRIPT_PATH)}`,
-          "os_detect() { printf 'linux\\n'; }",
-          "arch_detect() { printf 'x64\\n'; }",
           "is_musl_linux() { return 1; }",
           "detect_downloader() { :; }",
           "require_bin() { :; }",
@@ -1581,7 +1571,7 @@ describe("install-cli.sh", () => {
           "}",
           `PREFIX=${JSON.stringify(prefix)}`,
           "NODE_VERSION=22.22.3",
-          "install_node",
+          "install_node linux x64",
         ].join("\n"),
         {
           NEW_NODE: newNode,
@@ -1610,8 +1600,6 @@ describe("install-cli.sh", () => {
           "set -euo pipefail",
           `cd ${JSON.stringify(process.cwd())}`,
           `source ${JSON.stringify(SCRIPT_PATH)}`,
-          "os_detect() { printf 'linux\\n'; }",
-          "arch_detect() { printf 'x64\\n'; }",
           "is_musl_linux() { return 1; }",
           "linked_node_is_usable() { return 1; }",
           "detect_downloader() { :; }",
@@ -1620,7 +1608,7 @@ describe("install-cli.sh", () => {
           "download_file() { return 42; }",
           `PREFIX=${JSON.stringify(prefix)}`,
           "NODE_VERSION=22.22.3",
-          "install_node",
+          "install_node linux x64",
         ].join("\n"),
       );
 
