@@ -868,6 +868,17 @@ describe("release-note verification", () => {
     expect(releaseNoteReferences(section, baselines)).toEqual([1, 3]);
   });
 
+  it("does not treat CSS hex colors as release references", () => {
+    const commitMessage = [
+      "fix(control-ui): darken the Absolutely surface ramp (#130239)",
+      "",
+      "--bg #262624 sat above Dash #1a1210, Claw #0e1015, and Knot #080808.",
+      "Steps the ramp down (--bg #262624 -> #1c1c1a).",
+    ].join("\n");
+
+    expect(releaseNoteReferences(commitMessage, [])).toEqual([130239]);
+  });
+
   it("records a canonical target SHA when --target is symbolic", () => {
     const cwd = mkdtempSync(join(tmpdir(), "openclaw-release-notes-"));
     try {

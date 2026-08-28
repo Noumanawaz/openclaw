@@ -478,11 +478,33 @@ function sectionFor(changelog, version) {
   return section;
 }
 
+const referencePattern =
+  /(?<![A-Za-z0-9_.&-])(?:(?<owner>[A-Za-z0-9_.-]+)\/(?<name>[A-Za-z0-9_.-]+))?#(?<number>\d+)(?![A-Za-z0-9])/g;
+
+function referenceMatchesIn(text) {
+  return [...text.matchAll(referencePattern)].filter((match) => {
+    const matchIndex = match.index;
+    if (matchIndex === undefined) {
+      return true;
+    }
+    const hashIndex = matchIndex + match[0].lastIndexOf("#");
+    const lineStart = text.lastIndexOf("\n", hashIndex) + 1;
+    const lineEnd = text.indexOf("\n", hashIndex);
+    const line = text.slice(lineStart, lineEnd === -1 ? text.length : lineEnd);
+    const customPropertyIndex = line.search(/--[A-Za-z0-9_-]+(?:\s*:|\s+)/u);
+    const token = text.slice(hashIndex + 1).match(/^[A-Fa-f0-9]+/u)?.[0] ?? "";
+    const isCssHexLength = [3, 4, 6, 8].includes(token.length);
+    // Commit prose often compares CSS custom-property colors. Those tokens are
+    // not GitHub references and must never contaminate release attribution.
+    return (
+      customPropertyIndex < 0 || hashIndex - lineStart < customPropertyIndex || !isCssHexLength
+    );
+  });
+}
+
 function referencesIn(text) {
   const references = [];
-  for (const match of text.matchAll(
-    /(?<![A-Za-z0-9_.&-])(?:(?<owner>[A-Za-z0-9_.-]+)\/(?<name>[A-Za-z0-9_.-]+))?#(?<number>\d+)/g,
-  )) {
+  for (const match of referenceMatchesIn(text)) {
     const qualifiedRepository = match.groups?.owner
       ? `${match.groups.owner}/${match.groups.name}`.toLowerCase()
       : undefined;
@@ -495,9 +517,7 @@ function referencesIn(text) {
 
 function referenceLabelsIn(text) {
   const labels = [];
-  for (const match of text.matchAll(
-    /(?<![A-Za-z0-9_.&-])(?:(?<owner>[A-Za-z0-9_.-]+)\/(?<name>[A-Za-z0-9_.-]+))?#(?<number>\d+)/g,
-  )) {
+  for (const match of referenceMatchesIn(text)) {
     const qualifiedRepository = match.groups?.owner
       ? `${match.groups.owner}/${match.groups.name}`
       : undefined;
