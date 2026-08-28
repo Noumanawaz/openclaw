@@ -25,6 +25,11 @@ export type GatewayServiceRuntime = {
   lastRunResult?: string;
   lastRunTime?: string;
   detail?: string;
+  /** Bounded platform detail for classifiers/debug JSON; never render as the primary status. */
+  inspectionFailure?: {
+    code: "service-runtime-inspection-failed";
+    detail: string;
+  };
   cachedLabel?: boolean;
   missingUnit?: boolean;
   missingSupervision?: boolean;
