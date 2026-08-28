@@ -271,17 +271,7 @@ async function finishPreparedManualRun(
         return;
       }
       const postPersistNotifications: DeferredCronNotifications = [];
-      if (triggerSkipped) {
-        tryFinishCronTaskRunWithoutHistory(state, {
-          taskRunId,
-          status: coreResult.status,
-          error: coreResult.error,
-          endedAt,
-          summary: coreResult.summary,
-          childSessionKey: coreResult.sessionKey,
-          triggerEval: coreResult.triggerEval,
-        });
-      } else {
+      if (!triggerSkipped) {
         const taskJob = structuredClone(job);
         applyManualRunOutcome({
           state,
@@ -356,6 +346,17 @@ async function finishPreparedManualRun(
           committed.removed ? [jobId] : [],
           { publish: false },
         );
+        if (triggerSkipped) {
+          tryFinishCronTaskRunWithoutHistory(state, {
+            taskRunId,
+            status: coreResult.status,
+            error: coreResult.error,
+            endedAt,
+            summary: coreResult.summary,
+            childSessionKey: coreResult.sessionKey,
+            triggerEval: coreResult.triggerEval,
+          });
+        }
         // Retirement stops live publication, not the exact receipt's durable
         // completion. Manual force runs retain their reservation-time schedule owner.
         if (!isCronActiveJobMarkerCurrent(prepared.activeJobMarker)) {
