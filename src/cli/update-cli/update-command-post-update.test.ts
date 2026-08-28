@@ -126,6 +126,7 @@ async function finishSuccessfulPackageSwitch(params: {
   previousRoot: string;
   packageRoot: string;
   restartEnvironment?: NodeJS.ProcessEnv;
+  json?: boolean;
 }): Promise<void> {
   await finishUpdate({
     result: {
@@ -144,7 +145,7 @@ async function finishSuccessfulPackageSwitch(params: {
     channel: "stable",
     downgradeRisk: true,
     shouldRestart: Boolean(params.restartEnvironment),
-    opts: {},
+    opts: { json: params.json },
     showProgress: false,
     controlPlaneUpdateSentinelMeta: {},
     preUpdatePluginInstallRecords: {},
@@ -334,6 +335,44 @@ describe("successful update finalization ordering", () => {
     expect(mocks.restartService.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.ensureCompletionCache.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
+  });
+
+  it.each([
+    { name: "JSON mode", isTTY: true, json: true },
+    { name: "non-TTY mode", isTTY: false, json: false },
+  ])("skips interactive completion in $name", async ({ isTTY, json }) => {
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: isTTY });
+
+    await finishSuccessfulPackageSwitch({
+      previousRoot: "/tmp/openclaw-update",
+      packageRoot: "/tmp/openclaw-update",
+      restartEnvironment: process.env,
+      json,
+    });
+
+    expect(mocks.checkCompletionStatus).not.toHaveBeenCalled();
+    expect(mocks.ensureCompletionCache).not.toHaveBeenCalled();
+    expect(mocks.restartService).toHaveBeenCalledOnce();
+  });
+
+  it("keeps an unhealthy restart blocking before completion refresh", async () => {
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
+    mocks.restartService.mockResolvedValueOnce(false);
+    mocks.checkCompletionStatus.mockRejectedValueOnce(
+      new Error("completion status should not run after failed restart health"),
+    );
+
+    await finishSuccessfulPackageSwitch({
+      previousRoot: "/tmp/openclaw-update",
+      packageRoot: "/tmp/openclaw-update",
+      restartEnvironment: process.env,
+    });
+
+    expect(mocks.markSentinelFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: "restart-unhealthy" }),
+    );
+    expect(defaultRuntime.exit).toHaveBeenCalledWith(1);
+    expect(mocks.checkCompletionStatus).not.toHaveBeenCalled();
   });
 
   it("retires the wrapper before persisting and printing success", async () => {
