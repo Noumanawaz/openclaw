@@ -18,8 +18,11 @@ vi.mock("./official-external-plugin-catalog.js", async (importOriginal) => ({
     mocks.officialCatalog(...args),
 }));
 
-const { clearManagedPluginOfficialCatalogCache, listManagedPlugins, resolveManagedPluginIconUrl } =
-  await import("./management-service.js");
+const {
+  clearManagedPluginOfficialCatalogCache,
+  listManagedPlugins,
+  resolveManagedPluginIconSource,
+} = await import("./management-service.js");
 
 function metadataSnapshot(params: {
   id?: string;
@@ -176,7 +179,7 @@ describe("plugin management Featured authority", () => {
     mocks.metadata.mockReturnValue(emptyMetadataSnapshot());
 
     const catalog = await listManagedPlugins({ config: {}, env: {}, officialCatalog });
-    const resolved = await resolveManagedPluginIconUrl({
+    const resolved = await resolveManagedPluginIconSource({
       config: {},
       env: {},
       pluginId: "@expediagroup/expedia-openclaw",
@@ -191,7 +194,7 @@ describe("plugin management Featured authority", () => {
       order: 10,
       hasIcon: true,
     });
-    expect(resolved).toBe(icon);
+    expect(resolved).toEqual({ kind: "url", url: icon });
   });
 
   beforeEach(() => {
@@ -457,7 +460,7 @@ describe("plugin management Featured authority", () => {
     );
 
     const catalog = await listManagedPlugins({ config: {}, env: {} });
-    const resolvedIcon = await resolveManagedPluginIconUrl({
+    const resolvedIcon = await resolveManagedPluginIconSource({
       config: {},
       env: {},
       pluginId: "firecrawl",
@@ -475,7 +478,7 @@ describe("plugin management Featured authority", () => {
         hasIcon: true,
       }),
     ]);
-    expect(resolvedIcon).toBe(hostedIcon);
+    expect(resolvedIcon).toEqual({ kind: "url", url: hostedIcon });
   });
 
   it("keeps local curation for an unproven global package identity", async () => {
@@ -523,7 +526,7 @@ describe("plugin management Featured authority", () => {
     );
 
     const catalog = await listManagedPlugins({ config: {}, env: {} });
-    const resolvedIcon = await resolveManagedPluginIconUrl({
+    const resolvedIcon = await resolveManagedPluginIconSource({
       config: {},
       env: {},
       pluginId: "workboard",
@@ -538,7 +541,7 @@ describe("plugin management Featured authority", () => {
         order: 10,
       }),
     ]);
-    expect(resolvedIcon).toBe(localIcon);
+    expect(resolvedIcon).toEqual({ kind: "url", url: localIcon });
   });
 
   it("does not identify a package-less global plugin by hosted runtime id alone", async () => {

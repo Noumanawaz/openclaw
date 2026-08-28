@@ -731,21 +731,27 @@ function resolveInstalledHostedOfficialEntry(params: {
   };
 }
 
-function resolvePluginIconUrlFromCatalogFacts(params: {
+export type ManagedPluginIconSource = { kind: "file"; path: string } | { kind: "url"; url: string };
+
+function resolvePluginIconSourceFromCatalogFacts(params: {
   metadata: PluginMetadataSnapshot;
   officialEntries: readonly OfficialExternalPluginCatalogEntry[];
   bundledOfficialEntries?: readonly OfficialExternalPluginCatalogEntry[];
   pluginId: string;
-}): string | undefined {
+}): ManagedPluginIconSource | undefined {
   const normalizedPluginId = params.metadata.normalizePluginId(params.pluginId);
   const record = params.metadata.index.plugins.find(
     (candidate) => params.metadata.normalizePluginId(candidate.pluginId) === normalizedPluginId,
   );
-  const localIcon = normalizeOptionalString(
-    params.metadata.byPluginId.get(normalizedPluginId)?.icon,
-  );
+  const manifest = params.metadata.byPluginId.get(normalizedPluginId);
+  const localIconPath = normalizeOptionalString(manifest?.iconPath);
+  if (localIconPath) {
+    return { kind: "file", path: localIconPath };
+  }
+  const localIconUrl = normalizeOptionalString(manifest?.icon);
   if (!record) {
-    return resolveOfficialCatalogIconUrl(params.officialEntries, normalizedPluginId);
+    const url = resolveOfficialCatalogIconUrl(params.officialEntries, normalizedPluginId);
+    return url ? { kind: "url", url } : undefined;
   }
   const ownership = resolveInstalledPluginPackageOwnership(params.metadata.index, record.pluginId);
   const installOwner = ownership.ok ? ownership.value.installOwner : undefined;
@@ -757,7 +763,8 @@ function resolvePluginIconUrlFromCatalogFacts(params: {
     bundledOfficialEntries:
       params.bundledOfficialEntries ?? listOfficialExternalPluginCatalogEntries(),
   });
-  return resolveCatalogEntryIcon(officialEntry) ?? localIcon;
+  const url = resolveCatalogEntryIcon(officialEntry) ?? localIconUrl;
+  return url ? { kind: "url", url } : undefined;
 }
 
 function resolveManagedPluginMetadataParams(config: OpenClawConfig, env: NodeJS.ProcessEnv) {
@@ -769,19 +776,19 @@ function resolveManagedPluginMetadataParams(config: OpenClawConfig, env: NodeJS.
   };
 }
 
-/** Resolve the current manifest/catalog icon URL without accepting a caller-provided URL. */
-export async function resolveManagedPluginIconUrl(params: {
+/** Resolve the current package/manifest/catalog icon without accepting caller-provided input. */
+export async function resolveManagedPluginIconSource(params: {
   config: OpenClawConfig;
   pluginId: string;
   env?: NodeJS.ProcessEnv;
   officialCatalog?: OfficialCatalogResult;
-}): Promise<string | undefined> {
+}): Promise<ManagedPluginIconSource | undefined> {
   const env = params.env ?? process.env;
   const metadata = resolvePluginMetadataSnapshot(
     resolveManagedPluginMetadataParams(params.config, env),
   );
   const officialCatalog = params.officialCatalog ?? (await loadOfficialCatalog());
-  return resolvePluginIconUrlFromCatalogFacts({
+  return resolvePluginIconSourceFromCatalogFacts({
     metadata,
     officialEntries: officialCatalog.entries,
     bundledOfficialEntries: listOfficialExternalPluginCatalogEntries(),
@@ -935,7 +942,7 @@ export async function listManagedPlugins(params: {
       plugin.order = catalog.order;
     }
     if (
-      resolvePluginIconUrlFromCatalogFacts({
+      resolvePluginIconSourceFromCatalogFacts({
         metadata,
         officialEntries: officialCatalog.entries,
         bundledOfficialEntries,

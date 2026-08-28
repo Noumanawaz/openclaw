@@ -207,6 +207,37 @@ type SeenIdEntry = {
   recordIndex: number;
 };
 
+const PORTABLE_PLUGIN_ICON_PATH = path.join("assets", "icon.png");
+
+function resolvePortablePluginIconPath(params: {
+  rootDir: string;
+  rejectHardlinks: boolean;
+  realpathCache: Map<string, string>;
+}): string | undefined {
+  const iconPath = path.resolve(params.rootDir, PORTABLE_PLUGIN_ICON_PATH);
+  let iconStat: fs.Stats;
+  try {
+    iconStat = fs.lstatSync(iconPath);
+  } catch {
+    return undefined;
+  }
+  if (!iconStat.isFile() || (params.rejectHardlinks && iconStat.nlink > 1)) {
+    return undefined;
+  }
+  const rootPath = path.resolve(params.rootDir);
+  const rootRealPath = safeRealpathSync(rootPath, params.realpathCache) ?? rootPath;
+  return isPluginRootPath({
+    rootPath,
+    targetPath: iconPath,
+    rootRealPath,
+    realpathCache: params.realpathCache,
+    rejectHardlinks: params.rejectHardlinks,
+    targetMustExist: true,
+  })
+    ? iconPath
+    : undefined;
+}
+
 // Canonicalize identical physical plugin roots with the most explicit source.
 // This only applies when multiple candidates resolve to the same on-disk plugin.
 const PLUGIN_ORIGIN_RANK: Readonly<Record<PluginOrigin, number>> = {
@@ -223,6 +254,7 @@ export type PluginManifestRecord = {
   description?: string;
   catalog?: PluginManifestCatalog;
   icon?: string;
+  iconPath?: string;
   version?: string;
   packageName?: string;
   packageVersion?: string;
@@ -572,6 +604,11 @@ function buildRecord(params: {
       normalizeOptionalString(params.manifest.description) ?? params.candidate.packageDescription,
     catalog: mergeManifestCatalog(params.manifest.catalog, officialCatalogManifest?.catalog),
     icon: normalizeOptionalString(params.manifest.icon),
+    iconPath: resolvePortablePluginIconPath({
+      rootDir: params.candidate.rootDir,
+      rejectHardlinks: params.rejectHardlinks,
+      realpathCache: params.realpathCache,
+    }),
     version: normalizeOptionalString(params.manifest.version) ?? params.candidate.packageVersion,
     packageName: params.candidate.packageName,
     packageVersion: params.candidate.packageVersion,
@@ -680,11 +717,18 @@ function buildBundleRecord(params: {
   };
   candidate: PluginCandidate;
   manifestPath: string;
+  rejectHardlinks: boolean;
+  realpathCache: Map<string, string>;
 }): PluginManifestRecord {
   return {
     id: params.manifest.id,
     name: normalizeOptionalString(params.manifest.name) ?? params.candidate.idHint,
     description: normalizeOptionalString(params.manifest.description),
+    iconPath: resolvePortablePluginIconPath({
+      rootDir: params.candidate.rootDir,
+      rejectHardlinks: params.rejectHardlinks,
+      realpathCache: params.realpathCache,
+    }),
     version: normalizeOptionalString(params.manifest.version),
     packageName: params.candidate.packageName,
     packageVersion: params.candidate.packageVersion,
@@ -1198,6 +1242,8 @@ export function loadPluginManifestRegistryCore(
           manifest: manifest as Parameters<typeof buildBundleRecord>[0]["manifest"],
           candidate,
           manifestPath: manifestRes.manifestPath,
+          rejectHardlinks,
+          realpathCache,
         })
       : buildRecord({
           manifest: manifest as PluginManifest,

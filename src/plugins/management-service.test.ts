@@ -107,7 +107,7 @@ vi.mock("./recommended-tool-installs.js", () => ({
 const {
   clearManagedPluginOfficialCatalogCache,
   listManagedPlugins,
-  resolveManagedPluginIconUrl,
+  resolveManagedPluginIconSource,
   resolveManagedSetupCatalogIconUrl,
   setManagedPluginEnabled,
   uninstallManagedPlugin,
@@ -286,7 +286,7 @@ describe("plugin management service", () => {
       env,
       officialCatalog: { entries: [] },
     });
-    const resolved = await resolveManagedPluginIconUrl({
+    const resolved = await resolveManagedPluginIconSource({
       config,
       env,
       pluginId: "workboard",
@@ -294,7 +294,7 @@ describe("plugin management service", () => {
     });
 
     expect(catalog.plugins[0]).toMatchObject({ id: "workboard", hasIcon: true });
-    expect(resolved).toBe(icon);
+    expect(resolved).toEqual({ kind: "url", url: icon });
     expect(mocks.metadata).toHaveBeenNthCalledWith(1, {
       config,
       env,
@@ -325,7 +325,7 @@ describe("plugin management service", () => {
     mocks.metadata.mockReturnValue(emptyMetadataSnapshot());
 
     const catalog = await listManagedPlugins({ config: {}, env: {}, officialCatalog });
-    const resolved = await resolveManagedPluginIconUrl({
+    const resolved = await resolveManagedPluginIconSource({
       config: {},
       env: {},
       pluginId: "firecrawl",
@@ -334,7 +334,33 @@ describe("plugin management service", () => {
 
     expect(catalog.plugins[0]).toMatchObject({ id: "firecrawl", hasIcon: true });
     expect(catalog.plugins[0]).not.toHaveProperty("icon");
-    expect(resolved).toBe(icon);
+    expect(resolved).toEqual({ kind: "url", url: icon });
+  });
+
+  it("prefers the portable package icon over remote presentation URLs", async () => {
+    const iconPath = "/tmp/workboard/assets/icon.png";
+    mocks.metadata.mockReturnValue(
+      metadataSnapshot({
+        enabled: false,
+        icon: "https://cdn.example.test/workboard.svg",
+        iconPath,
+      }),
+    );
+
+    const catalog = await listManagedPlugins({
+      config: {},
+      env: {},
+      officialCatalog: { entries: [] },
+    });
+    const resolved = await resolveManagedPluginIconSource({
+      config: {},
+      env: {},
+      pluginId: "workboard",
+      officialCatalog: { entries: [] },
+    });
+
+    expect(catalog.plugins[0]).toMatchObject({ id: "workboard", hasIcon: true });
+    expect(resolved).toEqual({ kind: "file", path: iconPath });
   });
 
   it("allows only manifest and bundled setup catalog icon URLs", async () => {
@@ -365,7 +391,7 @@ describe("plugin management service", () => {
       env: {},
       officialCatalog: { entries: [] },
     });
-    const resolved = await resolveManagedPluginIconUrl({
+    const resolved = await resolveManagedPluginIconSource({
       config: {},
       env: {},
       pluginId: "workboard",
