@@ -183,7 +183,9 @@ invalid timing files, or `OPENCLAW_CI_TEST_TIMINGS=0`, use the cold-start estima
 for the entire file; stale keys cannot change the discovered test inventory.
 
 With an authenticated `gh` CLI, run `pnpm ci:timings:refit` to regenerate the file
-from all attempts of the last five successful `ci.yml` runs on `main`. Use `--runs <n>` to change
+from all attempts of the last five successful `ci.yml` push runs on `main`. The
+refit validates each run's event, branch, and head SHA before reading job logs;
+manual dispatches are rejected even when launched from `main`. Use `--runs <n>` to change
 the sample window, `--repo <owner/repo>` to select a repository, `--out <path>` to
 write elsewhere, or `--dry-run` to print changed entries without writing.
 Measurements come only from successful UI E2E and compact jobs; compact groups
@@ -215,10 +217,13 @@ update. The gitignored `.artifacts/vitest-shard-timings.json` remains a separate
 whole-config timing cache for the local test-project runner, not an input to
 these CI packers.
 
-This workflow uses only the repository's `GITHUB_TOKEN`. GitHub puts PR runs
-created by that token in an approval-required state; a maintainer must select
-**Approve workflows to run** and verify green CI on the current PR head before
-merging. Push events from this token do not start workflows. See
+The shared generated-PR publisher refreshes `main` and rejects stale generator
+inputs or overlapping timing-file changes before its leased branch push. It
+uses separate repository-scoped GitHub App tokens for branch and PR writes;
+the workflow's `GITHUB_TOKEN` has only contents-read permission. App-created
+events trigger CI without the `GITHUB_TOKEN`-specific workflow approval step.
+Normal repository review and required checks still apply; this workflow does
+not enable auto-merge. See
 [GitHub's workflow-trigger rules](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow#triggering-a-workflow-from-a-workflow).
 
 ## ClawSweeper activity forwarding

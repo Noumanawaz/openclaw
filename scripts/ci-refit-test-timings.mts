@@ -68,6 +68,10 @@ async function main() {
       created_at: z.iso.datetime(),
       status: z.literal("completed"),
       conclusion: z.literal("success"),
+      // A dispatch from main can check out target_ref; only push runs prove the measured ref.
+      event: z.literal("push"),
+      head_branch: z.literal("main"),
+      head_sha: z.string().regex(/^[a-f0-9]{40}$/u),
     }),
   );
   const listed: z.infer<typeof runPageSchema> = [];
@@ -80,9 +84,9 @@ async function main() {
       JSON.parse(
         await readGh([
           "api",
-          `repos/${repo}/actions/workflows/ci.yml/runs?branch=main&status=success&per_page=${pageSize}&page=${page}`,
+          `repos/${repo}/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&per_page=${pageSize}&page=${page}`,
           "--jq",
-          "[.workflow_runs[] | {id, created_at, status, conclusion}]",
+          "[.workflow_runs[] | {id, created_at, status, conclusion, event, head_branch, head_sha}]",
         ]),
       ),
     );
