@@ -274,6 +274,8 @@ HTTPServer(("0.0.0.0", 8000), Handler).serve_forever()
 }
 
 function buildOpenShellPolicyYaml(params: { port: number; binaryPath: string }): string {
+  // Match NVIDIA's host_gateway_alias.rs fixture across managed Docker bridges.
+  // Its 172.0.0.0/8 range is intentionally broader than RFC1918.
   const networkPolicies = `  host_echo:
     name: host-echo
     endpoints:
