@@ -804,44 +804,47 @@ describe("openshell sandbox backend e2e", () => {
           });
         }
       } finally {
-        for (const sandboxName of [
-          backend.runtimeId,
-          mirrorBackend.runtimeId,
-          allowBackend.runtimeId,
-        ]) {
-          await runCommand({
-            command: OPENCLAW_OPENSHELL_COMMAND,
-            args: ["--workspace", openShellWorkspace, "sandbox", "delete", sandboxName],
-            env,
-            allowFailure: true,
-            timeoutMs: 2 * 60_000,
-          });
-        }
-        if (workspaceCreated) {
-          await runCommand({
-            command: OPENCLAW_OPENSHELL_COMMAND,
-            args: ["workspace", "delete", openShellWorkspace],
-            env,
-            allowFailure: true,
-            timeoutMs: 30_000,
-          });
-        }
-        await hostPolicyServer?.close().catch(() => {});
-        await fs.rm(rootDir, { recursive: true, force: true });
-        if (previousHome === undefined) {
-          delete process.env.HOME;
-        } else {
-          process.env.HOME = previousHome;
-        }
-        if (previousXdgConfigHome === undefined) {
-          delete process.env.XDG_CONFIG_HOME;
-        } else {
-          process.env.XDG_CONFIG_HOME = previousXdgConfigHome;
-        }
-        if (previousXdgCacheHome === undefined) {
-          delete process.env.XDG_CACHE_HOME;
-        } else {
-          process.env.XDG_CACHE_HOME = previousXdgCacheHome;
+        // Workspace deletion verifies remote cleanup; local teardown must run even if it fails.
+        try {
+          for (const sandboxName of [
+            backend.runtimeId,
+            mirrorBackend.runtimeId,
+            allowBackend.runtimeId,
+          ]) {
+            await runCommand({
+              command: OPENCLAW_OPENSHELL_COMMAND,
+              args: ["--workspace", openShellWorkspace, "sandbox", "delete", sandboxName],
+              env,
+              allowFailure: true,
+              timeoutMs: 2 * 60_000,
+            });
+          }
+          if (workspaceCreated) {
+            await runCommand({
+              command: OPENCLAW_OPENSHELL_COMMAND,
+              args: ["workspace", "delete", openShellWorkspace],
+              env,
+              timeoutMs: 30_000,
+            });
+          }
+        } finally {
+          await hostPolicyServer?.close().catch(() => {});
+          await fs.rm(rootDir, { recursive: true, force: true });
+          if (previousHome === undefined) {
+            delete process.env.HOME;
+          } else {
+            process.env.HOME = previousHome;
+          }
+          if (previousXdgConfigHome === undefined) {
+            delete process.env.XDG_CONFIG_HOME;
+          } else {
+            process.env.XDG_CONFIG_HOME = previousXdgConfigHome;
+          }
+          if (previousXdgCacheHome === undefined) {
+            delete process.env.XDG_CACHE_HOME;
+          } else {
+            process.env.XDG_CACHE_HOME = previousXdgCacheHome;
+          }
         }
       }
     },
