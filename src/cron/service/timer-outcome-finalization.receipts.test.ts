@@ -18,6 +18,7 @@ import {
   prepareCronRunReceiptClaim,
 } from "../store/run-receipt-store.js";
 import type { CronJob } from "../types.js";
+import { reserveQueuedCronRun } from "./run-admission.js";
 import { createCronServiceState } from "./state.js";
 import { tryCreateCronTaskRunHandle } from "./task-runs.js";
 import type { TimedCronRunOutcome } from "./timer-execution-timeout.js";
@@ -89,6 +90,9 @@ describe("cron outcome receipt finalization", () => {
         runReceipt: retiredReceipt,
       }).runId;
       const retiredMarker = markCronJobActive(retired.id);
+      const reservationIdentity = reserveQueuedCronRun(state, retired.id, startedAt, {
+        runReceipt: retiredReceipt,
+      });
       advanceCronActiveJobGeneration();
       const currentMarker = markCronJobActive(current.id);
       let successor: ReturnType<typeof claimReceipt> | undefined;
@@ -107,6 +111,7 @@ describe("cron outcome receipt finalization", () => {
             job: retired,
             taskRunId,
             activeJobMarker: retiredMarker,
+            reservationIdentity,
             runReceipt: retiredReceipt,
             status: "ok",
             startedAt,

@@ -160,7 +160,7 @@ export async function start(state: CronServiceState): Promise<void> {
       applyRecoveryResult({
         state,
         proposal,
-        result: recoverCronRunProposal(state, proposal),
+        result: recoverCronRunProposal(state, proposal, "startup"),
         interruptedRuns,
         skipJobIds,
       });
