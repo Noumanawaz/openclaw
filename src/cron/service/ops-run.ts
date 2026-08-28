@@ -150,7 +150,6 @@ async function finishPreparedManualRun(
   const runId = prepared.runId;
   let finalized = false;
   let supersedeReason: string | undefined;
-  let supersedeCleanupOwnsReceipt = false;
   let receiptSettlementDisposition: CronRunReceiptSettlementDisposition | undefined;
 
   try {
@@ -245,7 +244,7 @@ async function finishPreparedManualRun(
         },
       );
     };
-    if (prepared.activeJobMarker?.jobRemoved === true) {
+    const finishRemovedRun = () => {
       finishCronRunReceipt({
         handle: prepared.runReceipt,
         status: resolveCronRunReceiptTerminalStatus(
@@ -257,17 +256,18 @@ async function finishPreparedManualRun(
       });
       finalized = true;
       emitMissingTerminal(true);
+    };
+    if (prepared.activeJobMarker?.jobRemoved === true) {
+      finishRemovedRun();
       return;
     }
     let notifySetupTimeout = coreResult.isolatedAgentSetupTimeout !== undefined;
     await locked(state, async () => {
       await ensureLoaded(state, { forceReload: true, skipRecompute: true });
-      if (prepared.activeJobMarker?.jobRemoved === true) {
-        notifySetupTimeout = false;
-        return;
-      }
       const job = state.store?.jobs.find((entry) => entry.id === jobId);
-      if (!job) {
+      if (prepared.activeJobMarker?.jobRemoved === true || !job) {
+        notifySetupTimeout = false;
+        finishRemovedRun();
         return;
       }
       const postPersistNotifications: DeferredCronNotifications = [];
@@ -428,7 +428,6 @@ async function finishPreparedManualRun(
       finalized = true;
     });
     if (supersedeReason) {
-      supersedeCleanupOwnsReceipt = true;
       await supersedeActivatedCronRun({
         state,
         jobId,
@@ -449,24 +448,13 @@ async function finishPreparedManualRun(
     }
     emitMissingTerminal();
   } finally {
-    // Terminal receipt persistence is fallible; local liveness and admission
-    // ownership must still retire or this process permanently self-fences the job.
+    // A failed row write leaves the exact receipt for recovery of its terminal
+    // task fact. Only local liveness and admission ownership retire here.
+    releaseLocalCronRunReceiptOwnership(prepared.runReceipt);
     try {
-      if (!finalized && !supersedeCleanupOwnsReceipt) {
-        finishCronRunReceipt({
-          handle: prepared.runReceipt,
-          status: "superseded",
-          finishedAtMs: state.deps.nowMs(),
-          error: "cron run result was not applied to the current job revision",
-        });
-      }
+      releaseQueuedCronRun(state, prepared.jobId, prepared.reservationIdentity);
     } finally {
-      releaseLocalCronRunReceiptOwnership(prepared.runReceipt);
-      try {
-        releaseQueuedCronRun(state, prepared.jobId, prepared.reservationIdentity);
-      } finally {
-        clearManualCronJobActive(state, jobId, prepared.activeJobMarker);
-      }
+      clearManualCronJobActive(state, jobId, prepared.activeJobMarker);
     }
   }
 }
