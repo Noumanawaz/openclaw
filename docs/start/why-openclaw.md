@@ -71,7 +71,7 @@ flowchart LR
   end
   subgraph EX["Configured isolated execution (sandboxing off by default)"]
     direction TB
-    SB["Sandbox: Docker, Podman, OpenShell, Daytona"]
+    SB["Sandbox: Docker, Podman, SSH, OpenShell"]
     ND["Hosted node sessions: sealed, hash-verified worker"]
     CW["Cloud workers: scoped RPC authority, proxied inference"]
   end
@@ -80,7 +80,7 @@ flowchart LR
   EX -->|"results and scoped worker RPCs"| GW
 ```
 
-[`tools.exec.host`](/tools/exec) resolves to the gateway host, a [sandbox](/gateway/sandboxing), or a paired [node](/nodes). While a sandbox runtime is active, per-call escapes to the host are rejected, and an explicit `host=sandbox` with no runtime configured fails instead of silently running on the host. Backends: Docker and Podman (default profile: no network, read-only root, all capabilities dropped, non-root user), SSH, [OpenShell](/gateway/openshell), and [Daytona](/gateway/daytona) cloud sandboxes (automatic idle-stop with resume on next use, memory-preserving pause, cold-storage archiving) — the latter two installed as plugins, registered through the same backend contract as Docker. If you run OpenShell already, OpenClaw uses its sandboxes; it does not need to be wrapped in one.
+[`tools.exec.host`](/tools/exec) resolves to the gateway host, a [sandbox](/gateway/sandboxing), or a paired [node](/nodes). While a sandbox runtime is active, per-call escapes to the host are rejected, and an explicit `host=sandbox` with no runtime configured fails instead of silently running on the host. Backends: Docker and Podman (default profile: no network, read-only root, all capabilities dropped, non-root user), SSH, and [OpenShell](/gateway/openshell), which is installed as a plugin and registered through the same backend contract as Docker. If you run OpenShell already, OpenClaw uses its sandboxes; it does not need to be wrapped in one.
 
 Sandbox bind mounts are validated twice, once on the normalized path and again after resolving through the deepest existing ancestor, so symlink-based bypass attempts fail closed. The deny-list of credential and system paths cannot be disabled — the `dangerouslyAllowExternalBindSources` override relaxes only the allowed-roots check.
 
