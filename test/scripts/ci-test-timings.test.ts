@@ -295,22 +295,39 @@ describe("CI test timing refit", () => {
     ).toEqual(first.timings);
   });
 
-  it("fetches only successful matching job logs, paginates, and keeps dry-run and unchanged refits byte-stable", () => {
-    const directory = realpathSync(mkdtempSync(path.join(tmpdir(), "openclaw-ci-refit-")));
-    const fakeGh = path.join(directory, "gh");
-    const output = path.join(directory, "timings.json");
-    const root = fileURLToPath(new URL("../../", import.meta.url));
-    const log = uiLog({ [measuredFile]: 130 });
-    writeFileSync(
-      fakeGh,
-      `#!/usr/bin/env node
+  it.each([
+    { label: "main push retries", metadata: {}, invalidField: undefined },
+    {
+      label: "manual dispatch from main",
+      metadata: { event: "workflow_dispatch" },
+      invalidField: "event",
+    },
+    {
+      label: "push to another branch",
+      metadata: { head_branch: "feature" },
+      invalidField: "head_branch",
+    },
+    { label: "missing head commit", metadata: { head_sha: null }, invalidField: "head_sha" },
+  ])(
+    "validates $label before fetching samples and preserves dry-run/unchanged bytes",
+    ({ metadata, invalidField }) => {
+      const directory = realpathSync(mkdtempSync(path.join(tmpdir(), "openclaw-ci-refit-")));
+      const fakeGh = path.join(directory, "gh");
+      const output = path.join(directory, "timings.json");
+      const requests = path.join(directory, "requests.json");
+      const root = fileURLToPath(new URL("../../", import.meta.url));
+      const log = uiLog({ [measuredFile]: 130 });
+      writeFileSync(
+        fakeGh,
+        `#!/usr/bin/env node
 const args = process.argv.slice(2);
 const endpoint = args[1];
 if (args[0] === "api" && args[1] === "--help") {
   console.log("--allow-escape-sequences");
-} else if (endpoint === "repos/fixture/repo/actions/workflows/ci.yml/runs?branch=main&status=success&per_page=3&page=1") {
+} else if (endpoint.replace("&event=push", "") === "repos/fixture/repo/actions/workflows/ci.yml/runs?branch=main&status=success&per_page=3&page=1") {
   if (!args.includes("--jq")) process.exit(2);
-  console.log(JSON.stringify([1, 2, 3].map(id => ({id, created_at: "2026-08-27T23:00:00Z", status: "completed", conclusion: "success"}))));
+  require("node:fs").writeFileSync(${JSON.stringify(requests)}, JSON.stringify(args));
+  console.log(JSON.stringify([1, 2, 3].map(id => ({id, created_at: "2026-08-27T23:00:00Z", status: "completed", conclusion: "success", event: "push", head_branch: "main", head_sha: "a".repeat(40), run_attempt: 2, ...${JSON.stringify(metadata)}}))));
 } else if (endpoint.includes("actions/runs/") && endpoint.includes("/jobs?filter=all&")) {
   if (!args.at(-1).includes("labels")) process.exit(2);
   const jobs = endpoint.endsWith("page=1")
@@ -334,65 +351,81 @@ if (args[0] === "api" && args[1] === "--help") {
   process.exit(2);
 }
 `,
-    );
-    chmodSync(fakeGh, 0o755);
-    const original = `${JSON.stringify(
-      {
-        ...baseline,
-        compactGroupSeconds: { blacksmith: { deleted: 30 }, github: {} },
-      },
-      null,
-      2,
-    )}\n`;
-    writeFileSync(output, original);
-    const invoke = (dryRun: boolean) =>
-      spawnSync(
-        process.execPath,
-        [
-          "--import",
-          "tsx",
-          "scripts/ci-refit-test-timings.mts",
-          "--runs",
-          "3",
-          "--repo",
-          "fixture/repo",
-          "--out",
-          output,
-          ...(dryRun ? ["--dry-run"] : []),
-        ],
+      );
+      chmodSync(fakeGh, 0o755);
+      const original = `${JSON.stringify(
         {
-          cwd: root,
-          encoding: "utf8",
-          env: { ...process.env, OPENCLAW_GH_BIN: fakeGh, GH_TOKEN: "fixture-token" },
+          ...baseline,
+          compactGroupSeconds: { blacksmith: { deleted: 30 }, github: {} },
         },
-      );
-    try {
-      const dryRun = invoke(true);
-      expect(dryRun.status, dryRun.stderr).toBe(0);
-      expect(dryRun.stdout).toContain(`| uiE2e.fileSeconds.${measuredFile} | 100 | 130 | 30.0% |`);
-      expect(dryRun.stdout).toContain(
-        "| compactGroupSeconds.blacksmith.deleted | 30 | — | removed |",
-      );
-      expect(dryRun.stdout).toContain("Sampled successful main CI runs: 1, 2, 3");
-      expect(readFileSync(output, "utf8")).toBe(original);
-      const write = invoke(false);
-      expect(write.status, write.stderr).toBe(0);
-      const updated = readFileSync(output, "utf8");
-      const timings = ciTestTimingsSchema.parse(JSON.parse(updated));
-      expect(timings.uiE2e.fileSeconds[measuredFile]).toBe(130);
-      expect(timings.compactGroupSeconds).toEqual({
-        blacksmith: { "core-unit-src-security-2": 20 },
-        github: { "core-unit-src-security-2": 50 },
-      });
-      expect(updated.endsWith("\n")).toBe(true);
-      const unchanged = invoke(false);
-      expect(unchanged.status, unchanged.stderr).toBe(0);
-      expect(unchanged.stdout).toContain("No timing changes");
-      expect(readFileSync(output, "utf8")).toBe(updated);
-    } finally {
-      rmSync(directory, { recursive: true, force: true });
-    }
-  });
+        null,
+        2,
+      )}\n`;
+      writeFileSync(output, original);
+      const invoke = (dryRun: boolean) =>
+        spawnSync(
+          process.execPath,
+          [
+            "--import",
+            "tsx",
+            "scripts/ci-refit-test-timings.mts",
+            "--runs",
+            "3",
+            "--repo",
+            "fixture/repo",
+            "--out",
+            output,
+            ...(dryRun ? ["--dry-run"] : []),
+          ],
+          {
+            cwd: root,
+            encoding: "utf8",
+            env: { ...process.env, OPENCLAW_GH_BIN: fakeGh, GH_TOKEN: "fixture-token" },
+          },
+        );
+      try {
+        const dryRun = invoke(true);
+        if (invalidField) {
+          expect(dryRun.status, dryRun.stderr).toBe(1);
+          expect(dryRun.stderr).toContain(invalidField);
+          expect(dryRun.stdout).not.toContain("Sampled successful main CI runs");
+          expect(readFileSync(output, "utf8")).toBe(original);
+          return;
+        }
+        expect(dryRun.status, dryRun.stderr).toBe(0);
+        expect(JSON.parse(readFileSync(requests, "utf8"))).toEqual([
+          "api",
+          "repos/fixture/repo/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&per_page=3&page=1",
+          "--jq",
+          "[.workflow_runs[] | {id, created_at, status, conclusion, event, head_branch, head_sha}]",
+        ]);
+        expect(dryRun.stdout).toContain(
+          `| uiE2e.fileSeconds.${measuredFile} | 100 | 130 | 30.0% |`,
+        );
+        expect(dryRun.stdout).toContain(
+          "| compactGroupSeconds.blacksmith.deleted | 30 | — | removed |",
+        );
+        expect(dryRun.stdout).toContain("Sampled successful main CI runs: 1, 2, 3");
+        expect(readFileSync(output, "utf8")).toBe(original);
+        const write = invoke(false);
+        expect(write.status, write.stderr).toBe(0);
+        const updated = readFileSync(output, "utf8");
+        const timings = ciTestTimingsSchema.parse(JSON.parse(updated));
+        expect(timings.uiE2e.fileSeconds[measuredFile]).toBe(130);
+        expect(timings.compactGroupSeconds).toEqual({
+          blacksmith: { "core-unit-src-security-2": 20 },
+          github: { "core-unit-src-security-2": 50 },
+        });
+        expect(updated.endsWith("\n")).toBe(true);
+        const unchanged = invoke(false);
+        expect(unchanged.status, unchanged.stderr).toBe(0);
+        expect(unchanged.stdout).toContain("No timing changes");
+        expect(readFileSync(output, "utf8")).toBe(updated);
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe("committed CI timing loader", () => {
