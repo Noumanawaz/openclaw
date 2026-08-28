@@ -2443,6 +2443,28 @@ describe("update-cli", () => {
     expectNoSideEffects(replaceConfigFile, syncPluginsForUpdateChannel, updateNpmInstalledPlugins);
   });
 
+  it("carries explicit capability consent into post-core plugin convergence", async () => {
+    const { entrypoints } = setupUpdatedRootRefresh({
+      gatewayUpdateImpl: async (root) =>
+        makeOkUpdateResult({
+          mode: "git",
+          root,
+          before: { sha: "old-sha", version: "2026.4.26" },
+          after: { sha: "new-sha", version: "2026.4.27" },
+        }),
+    });
+
+    await updateCommand({ acceptCapabilities: true, yes: true, restart: false });
+
+    expect(spawnCall()?.[1]).toEqual([
+      entrypoints[0],
+      "update",
+      "--no-restart",
+      "--yes",
+      "--accept-capabilities",
+    ]);
+  });
+
   it("keeps downgrade post-update work in the current process", async () => {
     const downgradedRoot = createCaseDir("openclaw-downgraded-root");
     setupUpdatedRootRefresh({
@@ -2467,6 +2489,37 @@ describe("update-cli", () => {
     expectFreshPostUpdateDoctor({ yes: true });
     expectNoSideEffects(runDaemonInstall, probeGateway);
     expect(defaultRuntime.exit).not.toHaveBeenCalledWith(1);
+  });
+
+  it("uses the canonical reviewed-surface acknowledgement for explicit update consent", async () => {
+    const downgradedRoot = createCaseDir("openclaw-downgraded-consent-root");
+    setupUpdatedRootRefresh({
+      gatewayUpdateImpl: async () =>
+        makeOkUpdateResult({
+          mode: "npm",
+          root: downgradedRoot,
+          before: { version: "2026.4.14" },
+          after: { version: "2026.4.10" },
+        }),
+    });
+    readPackageVersion.mockResolvedValue("2026.4.14");
+    primeNpmChannelTag("latest", "2026.4.10");
+    mockCurrentProcessFreshDoctor();
+
+    await updateCommand({
+      acceptCapabilities: true,
+      yes: true,
+      tag: "2026.4.10",
+      restart: false,
+    });
+
+    const handler = npmPluginUpdateCall()?.onCapabilityConsent as
+      | ((review: { reviewToken: string }) => Promise<{ reviewToken: string }>)
+      | undefined;
+    await expect(handler?.({ reviewToken: "reviewed-surface" })).resolves.toEqual({
+      reviewToken: "reviewed-surface",
+    });
+    expect(syncPluginCall()?.onCapabilityConsent).toBe(handler);
   });
 
   it("runs the fresh doctor for a core-changing downgrade without plugin changes", async () => {
@@ -7251,6 +7304,26 @@ describe("update-cli", () => {
       expect(await run("finalize")).toEqual(
         expect.objectContaining({ phase: "completionCache", outcome: "deferred" }),
       );
+    });
+  });
+
+  it.each([
+    ["before", ["update", "--accept-capabilities", "repair", "--json", "--yes"]],
+    ["after", ["update", "repair", "--accept-capabilities", "--json", "--yes"]],
+  ])("accepts capability consent %s the repair subcommand", async (_position, args) => {
+    pathExists.mockResolvedValue(false);
+    const program = new Command();
+    program.name("openclaw");
+    program.exitOverride();
+    registerUpdateCli(program);
+
+    await program.parseAsync(["node", "openclaw", ...args]);
+
+    const handler = syncPluginCall()?.onCapabilityConsent as
+      | ((review: { reviewToken: string }) => Promise<{ reviewToken: string }>)
+      | undefined;
+    await expect(handler?.({ reviewToken: "repair-reviewed-surface" })).resolves.toEqual({
+      reviewToken: "repair-reviewed-surface",
     });
   });
 
